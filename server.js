@@ -5,12 +5,17 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const store = require("./lib/db");
-const auth = require("./lib/auth");
-const mail = require("./lib/mail");
-const ai = require("./lib/ai");
-const push = require("./lib/push");
-const here = require("./lib/here");
+// Werkt met mappen (lib/, public/) én met alle bestanden los naast elkaar.
+function load(name) {
+  try { return require("./lib/" + name); }
+  catch (e) { if (e.code !== "MODULE_NOT_FOUND" || !String(e.message).includes("./lib/" + name)) throw e; return require("./" + name); }
+}
+const store = load("db");
+const auth = load("auth");
+const mail = load("mail");
+const ai = load("ai");
+const push = load("push");
+const here = load("here");
 
 const PORT = +process.env.PORT || 3000;
 const PUB = path.join(__dirname, "public");
@@ -184,9 +189,18 @@ function readBody(req, limit) {
   });
 }
 async function jsonBody(req) { const b = await readBody(req, 30 * 1024 * 1024); if (!b.length) return {}; try { return JSON.parse(b.toString("utf-8")); } catch { throw httpErr(400, "Ongeldige gegevens"); } }
+const PUBLIC_FILES = new Set(["login.html", "dispatch.html", "driver.html", "sw.js", "app.css", "dispatch.js", "driver.js", "icon.svg", "manifest-dispatch.webmanifest", "manifest-chauffeur.webmanifest"]);
+function findPublic(file) {
+  const a = path.join(PUB, file);
+  if (a.startsWith(PUB) && fs.existsSync(a) && !fs.statSync(a).isDirectory()) return a;
+  const base = path.basename(file);
+  if (!PUBLIC_FILES.has(base)) return null;
+  for (const p of [path.join(PUB, "assets", base), path.join(PUB, base), path.join(__dirname, "assets", base), path.join(__dirname, base)]) if (fs.existsSync(p)) return p;
+  return null;
+}
 function serveFile(res, file, extraHeaders = {}) {
-  const p = path.join(PUB, file);
-  if (!p.startsWith(PUB) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end("Niet gevonden"); }
+  const p = findPublic(file);
+  if (!p) { res.writeHead(404); return res.end("Niet gevonden"); }
   const ext = path.extname(p);
   res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": ext === ".html" || file === "sw.js" ? "no-cache" : "public, max-age=3600", "x-content-type-options": "nosniff", ...extraHeaders });
   fs.createReadStream(p).pipe(res);
