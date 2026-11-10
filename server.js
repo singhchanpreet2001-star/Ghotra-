@@ -343,23 +343,24 @@ on("DELETE", "/api/users/:id", (req, res, u, p) => {
 });
 
 // --- koppelingen instellen (beheerder) ---
+function relayKey() { const cur = store.setting("mail") || {}; if (process.env.MAIL_RELAY_KEY) return process.env.MAIL_RELAY_KEY; if (!cur.relayKey) store.setting("mail", { ...cur, relayKey: crypto.randomBytes(18).toString("base64url") }); return (store.setting("mail") || {}).relayKey; }
 on("GET", "/api/settings", (req, res, u) => {
   need(u, "admin"); const m = mail.config(), a = ai.config();
   send(res, 200, {
-    mail: { user: m.user, fromName: m.fromName, imapHost: m.imapHost, imapPort: m.imapPort, smtpHost: m.smtpHost, smtpPort: m.smtpPort, hasPass: !!m.pass, viaEnv: !!process.env.MAIL_USER },
+    mail: { user: m.user, fromName: m.fromName, imapHost: m.imapHost, imapPort: m.imapPort, smtpHost: m.smtpHost, smtpPort: m.smtpPort, hasPass: !!m.pass, viaEnv: !!process.env.MAIL_USER, relayUrl: m.relayUrl, relayKey: relayKey() },
     ai: { model: a.model, hasKey: !!a.key, viaEnv: !!process.env.ANTHROPIC_API_KEY },
     here: { hasKey: here.configured(), viaEnv: !!process.env.HERE_API_KEY },
   });
 });
 on("PUT", "/api/settings/:name", async (req, res, u, p) => {
   need(u, "admin"); const b = await jsonBody(req); const cur = store.setting(p.name) || {};
-  if (p.name === "mail") store.setting("mail", { ...cur, user: String(b.user || "").trim(), fromName: String(b.fromName || "").trim(), imapHost: String(b.imapHost || "").trim(), imapPort: +b.imapPort || 993, smtpHost: String(b.smtpHost || "").trim(), smtpPort: +b.smtpPort || 465, ...(b.pass ? { pass: String(b.pass).replace(/\s+/g, "") } : {}) });
+  if (p.name === "mail") store.setting("mail", { ...cur, user: String(b.user || "").trim(), fromName: String(b.fromName || "").trim(), imapHost: String(b.imapHost || "").trim(), imapPort: +b.imapPort || 993, smtpHost: String(b.smtpHost || "").trim(), smtpPort: +b.smtpPort || 465, relayUrl: String(b.relayUrl || "").trim(), ...(b.pass ? { pass: String(b.pass).replace(/\s+/g, "") } : {}) });
   else if (p.name === "ai") store.setting("ai", { ...cur, model: String(b.model || cur.model || "claude-sonnet-5-5").trim(), ...(b.key ? { key: String(b.key).trim() } : {}) });
   else if (p.name === "here") store.setting("here", { ...cur, ...(b.key ? { key: String(b.key).trim() } : {}) });
   else throw httpErr(404, "Onbekende instelling");
   send(res, 200, { ok: true });
 });
-on("POST", "/api/settings/mail/test", async (req, res, u) => { need(u, "admin"); try { send(res, 200, await mail.test()); } catch (e) { throw httpErr(400, e.message); } });
+on("POST", "/api/settings/mail/test", async (req, res, u) => { need(u, "admin"); try { send(res, 200, await mail.test()); } catch (e) { send(res, 200, { ok: false, lezen: e.message, versturen: "" }); } });
 
 // --- mail (kantoor) ---
 const mailErr = e => { throw httpErr(e.code === "not_configured" ? 409 : e.code === "not_found" ? 404 : 502, e.message, e.code); };
@@ -520,4 +521,32 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 180000;
+// ---------- nieuwe mail opvolgen: elke minuut, met melding naar kantoor ----------
+const MAIL_POLL = Math.max(30, +process.env.MAIL_POLL_SECONDS || 60) * 1000;
+let mailTimer = null, mailBusy = false;
+async function pollMail() {
+  if (mailBusy || !mail.configured()) return schedule(MAIL_POLL);
+  mailBusy = true;
+  try {
+    const st = store.setting("mailPoll") || {};
+    const same = st.user === mail.config().user;
+    const r = await mail.newSince(same ? st.last || 0 : 0);
+    const reset = same && st.validity && r.validity && st.validity !== r.validity;
+    store.setting("mailPoll", { user: mail.config().user, last: r.last, validity: r.validity });
+    const me = mail.config().user.toLowerCase();
+    const fresh = reset ? [] : r.items.filter(m => m.from !== me);
+    if (fresh.length) {
+      emitOffice({ type: "mail", items: fresh.map(m => ({ ...m, box: "inbox" })) });
+      const m = fresh[0];
+      push.notifyRole(["admin", "dispatch"], fresh.length === 1
+        ? { title: "Nieuwe mail van " + (m.fromName || m.from), body: (m.hasAtt ? "📎 " : "") + (m.subject || "(geen onderwerp)"), url: "/dispatch#mail" }
+        : { title: fresh.length + " nieuwe mails", body: fresh.slice(0, 3).map(x => (x.fromName || x.from) + ": " + (x.subject || "")).join("\n"), url: "/dispatch#mail" });
+    }
+    schedule(MAIL_POLL);
+  } catch (e) { console.error("Mail opvolgen:", e.message); schedule(5 * 60 * 1000); }
+  finally { mailBusy = false; }
+}
+function schedule(ms) { clearTimeout(mailTimer); mailTimer = setTimeout(pollMail, ms); }
+schedule(15000);
+
 server.listen(PORT, () => console.log(`Ghotra draait op poort ${PORT} · gegevens in ${store.DATA_DIR}`));
