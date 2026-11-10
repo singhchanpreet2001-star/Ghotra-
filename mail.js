@@ -8,8 +8,10 @@ const { setting } = require("./db");
 function config() {
   const s = setting("mail") || {};
   const user = process.env.MAIL_USER || s.user || "";
-  const isGoogle = /@(gmail|googlemail)\.com$/i.test(user) || /google/i.test(s.provider || "");
+  // Leeg = Google (Gmail of Google Workspace, ook met eigen domein).
+  const isGoogle = true;
   return {
+    relayUrl: process.env.MAIL_RELAY_URL || s.relayUrl || "", relayKey: process.env.MAIL_RELAY_KEY || s.relayKey || "",
     user, pass: process.env.MAIL_PASS || s.pass || "",
     fromName: process.env.MAIL_FROM_NAME || s.fromName || "",
     imapHost: process.env.MAIL_IMAP_HOST || s.imapHost || (isGoogle ? "imap.gmail.com" : ""),
@@ -18,7 +20,13 @@ function config() {
     smtpPort: +(process.env.MAIL_SMTP_PORT || s.smtpPort || 465),
   };
 }
-const configured = () => { const c = config(); return !!(c.user && c.pass && c.imapHost && c.smtpHost); };
+const configured = () => { const c = config(); return !!(c.user && c.pass && c.imapHost && (c.relayUrl || c.smtpHost)); };
+function netMsg(e, what) {
+  const code = (e && (e.code || "")) + " " + String(e && e.message || "");
+  if (/ETIMEDOUT|time-out|timed out|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN/i.test(code))
+    return what === "smtp" ? "Railway blokkeert uitgaande mail (SMTP) op je huidige abonnement. Gebruik de Google-verzendhulp hieronder, of neem Railway Pro." : "De mailserver is niet bereikbaar (IMAP, poort 993).";
+  return String(e && e.message || e);
+}
 const isGmail = c => /gmail\.com$/i.test(c.imapHost);
 
 // ---------------- IMAP ----------------
@@ -115,14 +123,34 @@ async function list({ box = "inbox", q = "", unread = false, page = 0, size = 25
     uids.sort((a, b) => b - a);
     const slice = uids.slice(page * size, page * size + size);
     if (!slice.length) return { items: [], next: null, total: uids.length };
-    const items = await im.cmd(`UID FETCH ${slice.join(",")} (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE MESSAGE-ID)])`);
-    const out = items.filter(it => / FETCH /i.test(it.text)).map(it => {
-      const f = parseFetch(it); const h = parseHeaders(f.lits[0] ? f.lits[0].toString("latin1") : "");
-      const from = parseAddress(h.from);
-      return { uid: f.uid, from: from.email, fromName: from.name || from.email, to: decodeWords(h.to || ""), subject: decodeWords(h.subject || ""), date: f.date || (h.date ? new Date(h.date).toISOString() : null),
-        unread: !f.flags.some(x => /\\Seen/i.test(x)), hasAtt: /multipart\/(mixed|related)/i.test(h["content-type"] || ""), messageId: h["message-id"] || "" };
-    }).sort((a, b) => b.uid - a.uid);
+    const out = await fetchHeaders(im, slice);
     return { items: out, next: uids.length > (page + 1) * size ? page + 1 : null, total: uids.length };
+  });
+}
+
+async function fetchHeaders(im, uids) {
+  const items = await im.cmd(`UID FETCH ${uids.join(",")} (UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE MESSAGE-ID)])`);
+  return items.filter(it => / FETCH /i.test(it.text)).map(it => {
+    const f = parseFetch(it); const h = parseHeaders(f.lits[0] ? f.lits[0].toString("latin1") : "");
+    const from = parseAddress(h.from);
+    return { uid: f.uid, from: from.email, fromName: from.name || from.email, to: decodeWords(h.to || ""), subject: decodeWords(h.subject || ""), date: f.date || (h.date ? new Date(h.date).toISOString() : null),
+      unread: !f.flags.some(x => /\\Seen/i.test(x)), hasAtt: /multipart\/(mixed|related)/i.test(h["content-type"] || ""), messageId: h["message-id"] || "" };
+  }).sort((a, b) => b.uid - a.uid);
+}
+
+// Nieuwe berichten in de inbox sinds lastUid. Eerste keer (lastUid 0): alleen het startpunt bepalen.
+async function newSince(lastUid) {
+  return withImap(async im => {
+    const st = await im.cmd('STATUS INBOX (UIDNEXT UIDVALIDITY)');
+    const t = st.map(x => x.text).join(" ");
+    const uidNext = +(/UIDNEXT (\d+)/i.exec(t) || [])[1] || 0, validity = +(/UIDVALIDITY (\d+)/i.exec(t) || [])[1] || 0;
+    if (!lastUid || !uidNext || uidNext - 1 <= lastUid) return { last: uidNext ? uidNext - 1 : lastUid, validity, items: [] };
+    await im.cmd("EXAMINE INBOX");
+    const r = await im.cmd(`UID SEARCH UID ${lastUid + 1}:*`);
+    const uids = []; r.forEach(it => { const m = /^\* SEARCH ?(.*)$/i.exec(it.text); if (m) m[1].split(/\s+/).filter(Boolean).forEach(u => { if (+u > lastUid) uids.push(+u); }); });
+    if (!uids.length) return { last: uidNext - 1, validity, items: [] };
+    const items = await fetchHeaders(im, uids.slice(-20));
+    return { last: Math.max(uidNext - 1, ...uids), validity, items };
   });
 }
 
@@ -183,11 +211,21 @@ function smtpSession(c) {
     });
   });
 }
+async function relayCall(c, payload) {
+  const r = await fetch(c.relayUrl, { method: "POST", headers: { "content-type": "text/plain;charset=utf-8" }, body: JSON.stringify({ key: c.relayKey, ...payload }), redirect: "follow", signal: AbortSignal.timeout(90000) });
+  const txt = await r.text(); let j; try { j = JSON.parse(txt); } catch { throw new Error(/<html/i.test(txt) ? "Het Google-hulpscript antwoordt niet goed. Controleer bij Implementeren: 'Uitvoeren als: Ik' en 'Toegang: Iedereen', en gebruik de URL die eindigt op /exec." : "Onverwacht antwoord van het Google-hulpscript"); }
+  if (!j.ok) throw new Error("Google-hulpscript: " + (j.error || "fout"));
+  return j;
+}
 async function send({ to, cc, subject, text, attachments, inReplyTo, references }) {
   const c = config();
   if (!configured()) throw Object.assign(new Error("Mail is nog niet ingesteld"), { code: "not_configured" });
+  if (c.relayUrl) {
+    await relayCall(c, { to, cc: cc || [], subject, body: text, fromName: c.fromName, attachments: (attachments || []).map(a => ({ name: a.filename, mime: a.mime || "application/octet-stream", data: Buffer.from(a.bytes).toString("base64") })) });
+    return { messageId: "" };
+  }
   const { raw, messageId } = buildMessage({ from: c.user, fromName: c.fromName, to, cc, subject, text, attachments, inReplyTo, references });
-  const s = await smtpSession(c);
+  const s = await smtpSession(c).catch(e => { throw new Error(netMsg(e, "smtp")); });
   try {
     const auth = Buffer.from("\0" + c.user + "\0" + c.pass, "utf-8").toString("base64");
     await s.send("AUTH PLAIN " + auth, /^235/).catch(() => { throw Object.assign(new Error("Inloggen bij de uitgaande mailserver mislukt. Controleer het app-wachtwoord."), { code: "auth" }); });
@@ -203,6 +241,20 @@ async function send({ to, cc, subject, text, attachments, inReplyTo, references 
   return { messageId };
 }
 
-async function test() { const n = await unseenCount(); const s = await smtpSession(config()); try { const c = config(); const auth = Buffer.from("\0" + c.user + "\0" + c.pass, "utf-8").toString("base64"); await s.send("AUTH PLAIN " + auth, /^235/); } finally { s.close(); } return { unseen: n }; }
+// Test lezen (IMAP) en versturen (hulpscript of SMTP) apart, met duidelijke uitleg.
+async function test() {
+  const c = config(); const out = { lezen: "", versturen: "", unseen: null, ok: false };
+  try { out.unseen = await unseenCount(); out.lezen = "ok"; } catch (e) { out.lezen = /Inloggen/.test(e.message) ? e.message : netMsg(e, "imap"); }
+  try {
+    if (c.relayUrl) { const j = await relayCall(c, { ping: true }); out.versturen = "ok"; out.via = "Google-hulpscript" + (j.email ? " (" + j.email + ")" : ""); }
+    else {
+      const s = await Promise.race([smtpSession(c), new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error("time-out"), { code: "ETIMEDOUT" })), 12000))]);
+      try { const auth = Buffer.from("\0" + c.user + "\0" + c.pass, "utf-8").toString("base64"); await s.send("AUTH PLAIN " + auth, /^235/).catch(() => { throw new Error("Inloggen bij de uitgaande mailserver mislukt. Controleer het app-wachtwoord."); }); } finally { s.close(); }
+      out.versturen = "ok"; out.via = "SMTP";
+    }
+  } catch (e) { out.versturen = netMsg(e, "smtp"); }
+  out.ok = out.lezen === "ok" && out.versturen === "ok";
+  return out;
+}
 
-module.exports = { config, configured, list, getMessage, getAttachment, send, unseenCount, test };
+module.exports = { config, configured, newSince, list, getMessage, getAttachment, send, unseenCount, test };
