@@ -1,0 +1,14 @@
+{
+  "name": "ghotra-tms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ghotra Transport: dispatch en chauffeursapp",
+  "main": "server.js",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "dev": "DATA_DIR=./data node --no-warnings server.js"
+  }
+}

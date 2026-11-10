@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ghotra Dispatch</title>
+<meta name="theme-color" content="#0d9466">
+<link rel="manifest" href="/manifest-dispatch.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="/assets/app.css">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Hoofdmenu"></nav>
+  <div class="main">
+    <header class="top">
+      <span class="logo" aria-hidden="true">G</span>
+      <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+        <span class="brand"><b>Ghotra</b> Dispatch</span>
+        <h1 id="title">Vandaag</h1>
+      </div>
+      <button class="icon-btn" id="addBtn" data-act="add" aria-label="Nieuw"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+    </header>
+    <main class="content" id="view"><div class="loading">Gegevens laden…</div></main>
+  </div>
+  <nav class="tabbar" id="tabbar" aria-label="Hoofdmenu"></nav>
+</div>
+<button id="aiBtn" data-act="ai" aria-label="Assistent openen" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01" stroke-width="3"/></svg></button>
+<section id="aiPanel" hidden aria-label="Assistent"></section>
+<div id="sheet" hidden><div class="scrim" data-act="close"></div><section class="panel" role="dialog" aria-modal="true" id="panel"></section></div>
+<div class="toast" id="toast" hidden></div>
+<script src="/assets/dispatch.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Aanmelden · Ghotra</title>
+<meta name="theme-color" content="#0d9466">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="manifest" href="/manifest-chauffeur.webmanifest">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/assets/app.css">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+</head>
+<body>
+<main class="login-wrap">
+  <section class="login-card">
+    <div style="display:flex;align-items:center;gap:12px"><span class="logo" aria-hidden="true">G</span><div><div class="brand"><b>Ghotra</b> Transport</div><h1 id="ttl">Aanmelden</h1></div></div>
+    <p class="muted" id="intro" style="margin:0">Voor kantoor en chauffeurs. Je komt automatisch in de juiste app.</p>
+    <form id="f" class="form" style="grid-template-columns:1fr" autocomplete="on">
+      <label class="field" for="nm" id="nmw" hidden><span class="lbl">Je naam</span><input id="nm" name="name" autocomplete="name"></label>
+      <label class="field" for="em"><span class="lbl">E-mailadres</span><input id="em" name="email" type="email" autocomplete="username" required></label>
+      <label class="field" for="pw"><span class="lbl">Wachtwoord</span><input id="pw" name="password" type="password" autocomplete="current-password" required minlength="1"></label>
+      <div class="err-text" id="err" role="alert"></div>
+      <button class="bigbtn" type="submit" id="go">Aanmelden</button>
+    </form>
+    <p class="muted" style="margin:0;font-size:12.5px" id="help">Wachtwoord vergeten? Vraag kantoor om een nieuw wachtwoord.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const $=s=>document.querySelector(s);let setup=false;
+async function j(u,o){const r=await fetch(u,{...o,headers:{"x-ghotra":"1","content-type":"application/json"}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Fout "+r.status);return d}
+(async()=>{
+  try{const me=await fetch("/api/me").then(r=>r.ok?r.json():null);if(me&&me.user){location.replace(me.user.role==="driver"?"/chauffeur":"/dispatch");return}}catch(e){}
+  try{const s=await j("/api/setup",{method:"GET"});if(s.needed){setup=true;$("#ttl").textContent="Eerste beheerder";$("#intro").textContent="Welkom. Maak de eerste beheerderslogin aan voor kantoor. Daarna maak je in de app logins voor collega's en chauffeurs.";$("#nmw").hidden=false;$("#nm").required=true;$("#pw").minLength=8;$("#pw").autocomplete="new-password";$("#go").textContent="Beheerder aanmaken";$("#help").hidden=true}}catch(e){}
+})();
+$("#f").addEventListener("submit",async e=>{e.preventDefault();$("#err").textContent="";const b=$("#go");b.disabled=true;
+  try{const body={email:$("#em").value.trim(),password:$("#pw").value,...(setup?{name:$("#nm").value.trim()}:{})};
+    const r=await j(setup?"/api/setup":"/api/login",{method:"POST",body:JSON.stringify(body)});
+    location.replace(r.go||(r.user&&r.user.role==="driver"?"/chauffeur":"/dispatch"))}
+  catch(err){$("#err").textContent=err.message;b.disabled=false}});
+</script>
+</body>
+</html>
