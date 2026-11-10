@@ -846,6 +846,24 @@ function vGebruikers(){const us=S.users||[];const admin=S.me&&S.me.role==="admin
 
 /* ---------- koppelingen ---------- */
 async function loadSettings(){if(!S.me||S.me.role!=="admin")return;try{S.settings=await api("/api/settings");if(S.view==="koppelingen")render()}catch(e){toast(e.message)}}
+function relayScript(key){return `const KEY = '${key}';
+
+function doPost(e) {
+  const d = JSON.parse(e.postData.contents);
+  if (d.key !== KEY) return out({ ok: false, error: 'Ongeldige sleutel' });
+  if (d.ping) return out({ ok: true, email: Session.getActiveUser().getEmail(), quota: MailApp.getRemainingDailyQuota() });
+  const opts = {};
+  if (d.fromName) opts.name = d.fromName;
+  if (d.cc && d.cc.length) opts.cc = d.cc.join(',');
+  if (d.attachments && d.attachments.length)
+    opts.attachments = d.attachments.map(a => Utilities.newBlob(Utilities.base64Decode(a.data), a.mime, a.name));
+  GmailApp.sendEmail(d.to.join(','), d.subject || '', d.body || '', opts);
+  return out({ ok: true });
+}
+
+function out(o) {
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}`}
 function vKoppelingen(){const st=S.status||{},admin=S.me&&S.me.role==="admin",s=S.settings;
   const dot=on=>`<span class="status-dot ${on?"on":"off"}"></span>${on?"Actief":"Niet ingesteld"}`;
   if(!admin)return `<div class="list"><div class="row"><span class="grow"><span class="t1">Mail</span></span>${dot(st.mail)}</div><div class="row"><span class="grow"><span class="t1">AI (PDF, CMR, assistent)</span></span>${dot(st.ai)}</div><div class="row"><span class="grow"><span class="t1">Vrachtwagenroutes</span></span>${dot(st.here)}</div></div><div class="notice">Alleen een beheerder kan koppelingen instellen.</div>`;
@@ -856,10 +874,23 @@ function vKoppelingen(){const st=S.status||{},admin=S.me&&S.me.role==="admin",s=
     <label class="field" for="sm_u"><span class="lbl">E-mailadres</span><input id="sm_u" name="user" type="email" value="${esc(m.user)}" placeholder="planning@jouwbedrijf.be"></label>
     <label class="field" for="sm_p"><span class="lbl">App-wachtwoord</span><input id="sm_p" name="pass" type="password" autocomplete="new-password" placeholder="${m.hasPass?"•••• opgeslagen (leeg laten = behouden)":"16 tekens van Google"}"></label>
     <label class="field full" for="sm_f"><span class="lbl">Naam afzender</span><input id="sm_f" name="fromName" value="${esc(m.fromName||S.bedrijf.naam||"")}" placeholder="Ghotra Transport"></label>
-    <label class="field" for="sm_ih"><span class="lbl">IMAP-server (inkomend)</span><input id="sm_ih" name="imapHost" value="${esc(m.imapHost)}" placeholder="imap.gmail.com"></label><label class="field" for="sm_ip"><span class="lbl">IMAP-poort</span><input id="sm_ip" name="imapPort" type="number" value="${esc(m.imapPort||993)}"></label>
-    <label class="field" for="sm_sh"><span class="lbl">SMTP-server (uitgaand)</span><input id="sm_sh" name="smtpHost" value="${esc(m.smtpHost)}" placeholder="smtp.gmail.com"></label><label class="field" for="sm_sp"><span class="lbl">SMTP-poort</span><input id="sm_sp" name="smtpPort" type="number" value="${esc(m.smtpPort||465)}"></label>
+    <label class="field" for="sm_ih"><span class="lbl">IMAP-server (inkomend)</span><input id="sm_ih" name="imapHost" value="${esc(m.imapHost)}" placeholder="leeg = Google (imap.gmail.com)"></label><label class="field" for="sm_ip"><span class="lbl">IMAP-poort</span><input id="sm_ip" name="imapPort" type="number" value="${esc(m.imapPort||993)}"></label>
+    <label class="field" for="sm_sh"><span class="lbl">SMTP-server (uitgaand)</span><input id="sm_sh" name="smtpHost" value="${esc(m.smtpHost)}" placeholder="leeg = Google (smtp.gmail.com)"></label><label class="field" for="sm_sp"><span class="lbl">SMTP-poort</span><input id="sm_sp" name="smtpPort" type="number" value="${esc(m.smtpPort||465)}"></label>
     <div class="full actions"><button class="btn primary" type="submit">Opslaan</button><button class="btn" type="button" data-act="mailtest">Verbinding testen</button></div>
-    <div class="full muted" style="font-size:12.5px">Gmail of Google Workspace (ook met eigen domein): zet tweestapsverificatie aan en maak een app-wachtwoord via myaccount.google.com/apppasswords. De servers vult de app dan zelf in. Andere provider: vul de IMAP- en SMTP-gegevens van je provider in.</div></form>`}</section>
+    <div class="full muted" style="font-size:12.5px">Gmail of Google Workspace (ook met eigen domein): zet tweestapsverificatie aan en maak een app-wachtwoord via myaccount.google.com/apppasswords. Laat de servers leeg, dan gebruikt de app die van Google. Andere provider: vul de IMAP- en SMTP-gegevens van je provider in.</div>
+    ${S.mailTest?`<div class="full notice ${S.mailTest.ok?"ok":"warn"}"><b>Testresultaat</b><span>Mail lezen: ${S.mailTest.lezen==="ok"?"✓ in orde"+(S.mailTest.unseen!=null?" ("+S.mailTest.unseen+" ongelezen)":""):esc(S.mailTest.lezen)}</span><span>Mail versturen: ${S.mailTest.versturen==="ok"?"✓ in orde via "+esc(S.mailTest.via||""):esc(S.mailTest.versturen)}</span></div>`:""}
+    <div class="full sec" style="margin-top:6px"><h2 style="font-size:15px">Versturen via Google-hulpscript</h2>
+     <div class="muted" style="font-size:13px">Nodig als Railway uitgaande mail blokkeert (Hobby-abonnement). De app verstuurt dan via je eigen Google-account; mails staan gewoon in Gmail bij Verzonden.</div>
+     <ol style="margin:0;padding-left:20px;font-size:13.5px;display:flex;flex-direction:column;gap:4px">
+      <li>Ga naar <b>script.google.com</b> (aangemeld met je zakelijke Google-account) → <b>Nieuw project</b>.</li>
+      <li>Wis alles en plak het script hieronder (knop <b>Script kopiëren</b>). Klik op 💾 Opslaan.</li>
+      <li>Klik rechtsboven op <b>Implementeren → Nieuwe implementatie</b> → tandwiel → <b>Web-app</b>. Uitvoeren als: <b>Ik</b>. Toegang: <b>Iedereen</b>. Klik op <b>Implementeren</b>.</li>
+      <li>Geef toestemming. Zie je "Google heeft deze app niet geverifieerd": <b>Geavanceerd → Ga naar … (onveilig)</b>. Het is je eigen script.</li>
+      <li>Kopieer de <b>URL van de web-app</b> (eindigt op /exec), plak hem hieronder, klik op Opslaan en daarna op Verbinding testen.</li></ol>
+     <pre id="relayCode" style="background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:11.5px;overflow-x:auto;max-height:180px;margin:0">${esc(relayScript(m.relayKey||""))}</pre>
+     <div><button class="btn sm" type="button" data-act="copyscript">Script kopiëren</button></div>
+     <label class="field" for="sm_rl"><span class="lbl">URL van de web-app</span><input id="sm_rl" name="relayUrl" value="${esc(m.relayUrl||"")}" placeholder="https://script.google.com/macros/s/…/exec"></label>
+     <div class="actions"><button class="btn primary" type="submit">Opslaan</button><button class="btn" type="button" data-act="mailtest">Verbinding testen</button></div></div></form>`}</section>
   <section class="sec"><div class="sec-h"><h2>AI: PDF-opdrachten, CMR-controle, assistent</h2><span>${dot(st.ai)}</span></div>
    ${s.ai.viaEnv?'<div class="notice">Ingesteld via Railway-variabelen.</div>':`<form class="form" data-form="setai"><label class="field full" for="sa_k"><span class="lbl">Anthropic API-sleutel</span><input id="sa_k" name="key" type="password" autocomplete="off" placeholder="${s.ai.hasKey?"•••• opgeslagen (leeg laten = behouden)":"sk-ant-…"}"></label>
     <label class="field full" for="sa_m"><span class="lbl">Model</span><input id="sa_m" name="model" value="${esc(s.ai.model)}"></label><div class="full actions"><button class="btn primary" type="submit">Opslaan</button></div>
@@ -920,7 +951,8 @@ Object.assign(ACT,{
    const pwd=genPassword();try{await api(`/api/users/${u.id}`,{method:"PATCH",json:{password:pwd}});openSheet({type:"pwd",title:"Nieuw wachtwoord ingesteld",email:u.email,pwd,name:u.name,role:u.role})}catch(e){toast(e.message)}},
  usertoggle:async d=>{const u=(S.users||[]).find(x=>x.id===d.id);if(!u)return;try{await api(`/api/users/${u.id}`,{method:"PATCH",json:{active:!u.active}});await loadUsers();toast(u.active?"Login uitgeschakeld":"Login ingeschakeld")}catch(e){toast(e.message)}},
  userdel:async(d,btn)=>{if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Zeker?";return}try{await api(`/api/users/${d.id}`,{method:"DELETE"});await loadUsers();toast("Login verwijderd")}catch(e){toast(e.message)}},
- mailtest:async(d,btn)=>{btn.disabled=true;btn.textContent="Testen…";try{const r=await api("/api/settings/mail/test",{method:"POST",json:{}});toast("Mail werkt. Ongelezen in inbox: "+r.unseen)}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Verbinding testen"}
+ mailtest:async(d,btn)=>{btn.disabled=true;btn.textContent="Testen…";try{const r=await api("/api/settings/mail/test",{method:"POST",json:{}});S.mailTest=r;render();toast(r.ok?"Mail werkt: lezen en versturen in orde":"Mail nog niet volledig in orde, zie uitleg")}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Verbinding testen"},
+ copyscript:async()=>{const t=$("#relayCode").textContent;try{await navigator.clipboard.writeText(t);toast("Script gekopieerd")}catch(e){const r=document.createRange();r.selectNodeContents($("#relayCode"));const sl=getSelection();sl.removeAllRanges();sl.addRange(r);toast("Kopieer de geselecteerde tekst")}}
 });
 
 /* ---------- formulieren: aanvullingen ---------- */
@@ -1057,6 +1089,11 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
         if(m.col==="absences"&&!prev){const c=byId("drivers",d.chauffeurId);toast(`${c?c.naam:"Een chauffeur"}: ${d.type.toLowerCase()} gemeld`)}
         if(m.col==="invoices"&&!prev&&d.status==="Concept")toast(`Conceptfactuur ${d.nr} klaar ter controle`)}
       liveRender()}
+    if(m.type==="mail"){const items=m.items||[];if(!items.length)return;
+      if(S.mail.box==="inbox"&&!S.mail.q&&(S.mail.state==="ok"||S.mail.state==="more")){const have=new Set(S.mail.threads.map(t=>t.box+"-"+t.uid));S.mail.threads=items.filter(t=>!have.has(t.box+"-"+t.uid)).concat(S.mail.threads)}
+      else if(S.view!=="mail"){S.mail.state="idle"}
+      const f=items[0];toast(items.length===1?`Nieuwe mail van ${f.fromName||f.from}: ${f.subject||"(geen onderwerp)"}`:`${items.length} nieuwe mails`);
+      render();return}
     if(m.type==="pos"){S.positions=S.positions||[];const i=S.positions.findIndex(p=>p.driverId===m.pos.driverId);if(i>=0)S.positions[i]=m.pos;else S.positions.push(m.pos);updateTruck()}}}
 
 /* ---------- boot ---------- */
@@ -1072,6 +1109,6 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
   if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   if(S.view==="koppelingen")loadSettings();
   if(mcp)loadMail();
-  setInterval(()=>{if(mcp&&S.view!=="mail"&&document.visibilityState==="visible")api(`/api/mail/list?box=inbox&page=0`).then(r=>{if(S.mail.box==="inbox"&&!S.mail.q&&!S.mail.unread){S.mail.threads=(r.items||[]).map(x=>({...x,box:"inbox"}));S.mail.next=r.next;S.mail.state="ok";render()}}).catch(()=>{})},120000);
+  if(false)setInterval(()=>{if(mcp&&S.view!=="mail"&&document.visibilityState==="visible")api(`/api/mail/list?box=inbox&page=0`).then(r=>{if(S.mail.box==="inbox"&&!S.mail.q&&!S.mail.unread){S.mail.threads=(r.items||[]).map(x=>({...x,box:"inbox"}));S.mail.next=r.next;S.mail.state="ok";render()}}).catch(()=>{})},120000);
 })();
 
