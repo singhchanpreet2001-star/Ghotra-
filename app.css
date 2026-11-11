@@ -334,3 +334,4 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 #jcur.quiet .jb{opacity:.85}
 .jhit{outline:3px solid var(--accent)!important;outline-offset:2px;border-radius:10px;transition:outline-color .3s}
 @media (prefers-reduced-motion:reduce){#jcur{transition:opacity .3s}}
+.jrecent{margin-top:10px}.jrecent summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--muted);padding:4px 0}.jrecent .jlist{margin-top:6px}

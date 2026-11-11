@@ -410,8 +410,10 @@ module.exports = function createJarvis(x) {
   // ---------- hoofdlus ----------
   let busy = false, lastRun = {};
   async function tick(why) {
-    if (busy) return; const c = cfg(); if (!c.aan) return;
+    if (busy) return; const c = cfg(); if (!c.aan) { if (store.setting("jarvisWasOn")) store.setting("jarvisWasOn", false); return; }
     busy = true; winCache = new Map();
+    // net aangezet? dan eerst de mails van de laatste 24 uur lezen, zonder dat je moet klikken
+    if (!store.setting("jarvisWasOn")) { store.setting("jarvisWasOn", true); busy = false; try { await catchup(); } catch (e) { console.error("Jarvis inhalen:", e.message); } return; }
     act("Ik controleer mail, planning, ritten en facturen…", { view: "vandaag" }, true);
     try {
       if (mail.configured() && ai.configured()) {

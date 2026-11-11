@@ -152,6 +152,7 @@ function vVandaag(){
   const al=alerts();
   return `
   <div class="lbl">${new Date().toLocaleDateString("nl-BE",{weekday:"long",day:"numeric",month:"long"})}</div>
+  ${jarvisCard()}
   <div class="kpis">
     <button class="kpi" data-act="nav" data-v="ritten"><span class="lbl">Ritten vandaag</span><span class="v">${vandaag.length}</span></button>
     <button class="kpi" data-act="nav" data-v="ritten"><span class="lbl">Onderweg</span><span class="v">${onderweg}</span></button>
@@ -159,7 +160,6 @@ function vVandaag(){
     <button class="kpi" data-act="nav" data-v="mail"><span class="lbl">Ongelezen mail</span><span class="v">${S.mail.state==="ok"?unread:"–"}</span></button>
   </div>
   ${S.drivers.length?`<section class="sec"><div class="sec-h"><h2>Beschikbaarheid</h2><button class="btn sm" data-act="nav" data-v="planning">Kalender</button></div><div class="avail">${S.drivers.slice().sort((a,b)=>(a.naam||"").localeCompare(b.naam||"")).map(d=>{const st=driverStatus(d),a=absOn(d.id,t);return `<button class="av ${sCls(st)}" data-act="${a?"edit-absences":"newabs"}" data-id="${a?a.id:d.id}" title="${a?esc(abLabel(a)):"Ziekte of verlof ingeven"}"><i></i><span>${esc(d.naam)}<br><small>${esc(a?abLabel(a):st)}</small></span></button>`}).join("")}</div></section>`:""}
-  ${jarvisCard()}
   ${fleetCard()}
   <section class="sec"><div class="sec-h"><h2>Planning per chauffeur</h2><small>${vandaag.length} ritten</small></div>
    ${vandaag.length?`<div class="board">${board}</div>`:`<div class="list"><div class="empty">Geen ritten voor vandaag gepland.<button class="btn primary sm" data-act="new" data-col="orders">Rit plannen</button></div></div>`}</section>
@@ -1172,10 +1172,13 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
 const JICON={prijs:"💶",rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",factuur:"🧾",herinnering:"💶",vraag:"❓",update:"🗒️",fout:"⚠️"};
 async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag"].includes(S.view))render()}
 const jOpen=()=>((S.jarvis||{}).items||[]).filter(j=>j.open&&!j.klaar);
-function jarvisCard(){const J=S.jarvis;if(!J||J.state!=="ok")return"";const c=J.config||{},open=jOpen(),up=(J.items||[]).find(j=>j.soort==="update");
-  return `<section class="sec"><div class="sec-h"><h2>🤖 Jarvis</h2><button class="btn sm" data-act="nav" data-v="jarvis">Openen</button></div>
-   <button class="kpi jcard" data-act="nav" data-v="jarvis"><span class="grow"><b>${!c.aan?"Staat uit":c.proef?"Proefmodus: stelt chauffeurs voor":"Plant en controleert automatisch"}</b>
-   <span class="muted" style="font-size:12.5px;display:block">${open.length?`${open.length} ${open.length===1?"vraag":"vragen"} voor jou`:"Geen vragen voor jou"}${up?" · laatste update "+ftime(up.at):""}</span></span>${open.length?`<span class="badge">${open.length}</span>`:""}</button></section>`}
+function jarvisCard(){const J=S.jarvis;if(!J||J.state!=="ok")return"";const c=J.config||{},open=jOpen(),items=J.items||[],up=items.find(j=>j.soort==="update");
+  const recent=items.filter(j=>j.soort!=="update"&&!(j.open&&!j.klaar)).slice(0,5);const more=S.jShowAll?open:open.slice(0,4);
+  if(!c.aan)return `<section class="sec"><div class="sec-h"><h2>🤖 Jarvis</h2><button class="btn sm" data-act="nav" data-v="jarvis">Instellen</button></div><div class="notice">Jarvis staat uit. Zet hem aan om mails, planning en facturen te laten opvolgen.</div></section>`;
+  return `<section class="sec jvd"><div class="sec-h"><h2>🤖 Jarvis <small class="muted" style="font-weight:500;font-size:12.5px">${c.proef?"proefmodus":"automatisch"}</small></h2><button class="btn sm" data-act="nav" data-v="jarvis">Logboek en instellingen</button></div>
+   ${open.length?`<div class="lbl" style="margin:2px 0 6px">Voor jou (${open.length})</div><div class="jlist">${more.map(jItem).join("")}</div>${open.length>4?`<button class="linkbtn" data-act="jall">${S.jShowAll?"Minder tonen":"Toon alle "+open.length+" vragen"}</button>`:""}`:`<div class="notice ok"><b>Niets voor jou</b>Jarvis leest je mail, plant en volgt alles op. Je krijgt hier een update om de ${c.updateUren||2} uur.</div>`}
+   ${up?`<div class="jupd" style="margin-top:10px"><div class="t2 muted">${esc(up.titel||"Update")} · ${ftime(up.at)}</div><div class="jtext">${esc(up.tekst)}</div></div>`:""}
+   ${recent.length?`<details class="jrecent"><summary>Wat Jarvis net deed</summary><div class="jlist">${recent.map(jItem).join("")}</div></details>`:""}</section>`}
 function jItem(j){const a=j.actie||{},ref=j.ref||{};
   const VV={drivers:"chauffeurs",vehicles:"voertuigen",documents:"documenten"};
   const btns=j.open&&!j.klaar?[
@@ -1229,6 +1232,7 @@ Object.assign(ACT,{
  jmail:d=>openThread(d.id),
  jinv:d=>{const i=byId("invoices",d.id);if(!i)return toast("Factuur niet gevonden");openSheet(i.status==="Concept"?{type:"review",id:i.id}:{type:"invoice",id:i.id})},
  jupdate:async(d,btn)=>{btn.disabled=true;btn.textContent="Schrijven…";try{await api("/api/jarvis/update",{method:"POST",json:{}});await loadJarvis()}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Nu een update"},
+ jall:()=>{S.jShowAll=!S.jShowAll;render()},
  jcatch:async(d,btn)=>{btn.disabled=true;try{const r=await api("/api/jarvis/catchup",{method:"POST",json:{}});toast(r.aantal?`Jarvis leest ${r.aantal} ${r.aantal===1?"mail":"mails"}`:"Geen ongelezen mails van vandaag voor Jarvis")}catch(e){toast(e.message)}btn.disabled=false},
  jrun:async(d,btn)=>{btn.disabled=true;btn.textContent="Bezig…";try{await api("/api/jarvis/run",{method:"POST",json:{}});await reloadData();await loadJarvis();toast("Jarvis is klaar met zijn ronde")}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Nu laten werken"}});
 SUBMIT.jarviscfg=async f=>{const fd=new FormData(f),n=k=>+fd.get(k);
@@ -1275,7 +1279,7 @@ function jTarget(t){t=t||{};const vis=e=>e&&e.offsetParent&&(()=>{const r=e.getB
   if(t.col==="orders"&&t.id){const e=document.querySelector(`[data-act="order"][data-id="${CSS.escape(t.id)}"]`);if(vis(e))return e;return navEl("ritten")}
   if(t.col==="invoices"&&t.id){const e=document.querySelector(`[data-act="review"][data-id="${CSS.escape(t.id)}"],[data-act="invoice"][data-id="${CSS.escape(t.id)}"]`);if(vis(e))return e;return navEl("facturen")}
   if(t.col==="customers")return navEl("meer");
-  if(t.view==="jarvis"){const e=document.querySelector(".jcard")||document.querySelector(".jrow.open");if(vis(e))return e;return navEl("jarvis")}
+  if(t.view==="jarvis"){const e=document.querySelector(".jvd .jrow.open")||document.querySelector(".jvd")||document.querySelector(".jrow.open");if(vis(e))return e;return navEl("jarvis")}
   if(t.view)return navEl(t.view)||null;return null}
 function jarvisAct(m){if(!jcurOn()||document.hidden)return;if(m.quiet){if(!jBusy){const c=jEl();c.classList.add("on","quiet");c.querySelector(".jt2").textContent=m.text;clearTimeout(jHide);jHide=setTimeout(()=>c.classList.remove("on","quiet"),2500)}return}
   JQ.push(m);if(JQ.length>6)JQ.splice(0,JQ.length-6);if(!jBusy)jNext()}
