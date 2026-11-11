@@ -56,4 +56,17 @@ async function truckRoute(from, to, vehicle = {}, adr = false) {
   return { coords, length, duration, trafficDelay: Math.max(0, duration - base), steps, notices };
 }
 
-module.exports = { config, configured, geocode, truckRoute, decodePolyline };
+// Test: adres zoeken en een vrachtwagenroute Antwerpen → Brussel berekenen.
+async function test() {
+  if (!configured()) return { ok: false, msg: "Er is nog geen HERE-sleutel opgeslagen." };
+  try {
+    const r = await fetch(`https://geocode.search.hereapi.com/v1/geocode?q=${encodeURIComponent("Grote Markt 1, Brussel")}&limit=1&apiKey=${encodeURIComponent(config().key)}`, { signal: AbortSignal.timeout(15000) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401 || r.status === 403) return { ok: false, msg: `HERE weigert de sleutel (${r.status}). Controleer of je de API key (niet de App ID) hebt gekopieerd en of de app toegang heeft tot Geocoding en Routing. ${j.error_description || j.title || ""}`.trim() };
+    if (!r.ok) return { ok: false, msg: `Adres zoeken mislukt (${r.status}): ${j.title || j.error_description || "onbekende fout"}` };
+    const route = await truckRoute({ lat: 51.2194, lng: 4.4025 }, { lat: 50.8467, lng: 4.3525 }, { hoogte: 4, breedte: 2.55, lengte: 16.5, massa: 40 });
+    return { ok: true, msg: `Werkt. Testroute Antwerpen → Brussel: ${(route.length / 1000).toFixed(0)} km, ${Math.round(route.duration / 60)} min.` };
+  } catch (e) { return { ok: false, msg: "Route berekenen mislukt: " + e.message }; }
+}
+
+module.exports = { config, configured, geocode, truckRoute, decodePolyline, test };
