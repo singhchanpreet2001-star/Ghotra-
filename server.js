@@ -364,6 +364,7 @@ on("PUT", "/api/settings/:name", async (req, res, u, p) => {
   else throw httpErr(404, "Onbekende instelling");
   send(res, 200, { ok: true });
 });
+on("POST", "/api/settings/here/test", async (req, res, u) => { need(u, "admin"); send(res, 200, await here.test()); });
 on("POST", "/api/settings/mail/test", async (req, res, u) => { need(u, "admin"); try { send(res, 200, await mail.test()); } catch (e) { send(res, 200, { ok: false, lezen: e.message, versturen: "" }); } });
 
 // --- mail (kantoor) ---
