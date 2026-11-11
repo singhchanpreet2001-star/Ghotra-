@@ -32,7 +32,7 @@ const addr=(o,which)=>(which==="laad"?(o.laadadres||o.laadplaats):(o.losadres||o
 const gmaps=dest=>"https://www.google.com/maps/dir/?api=1&travelmode=driving&destination="+encodeURIComponent(dest);
 
 /* ---------- views ---------- */
-function render(){
+function render(){setTimeout(geoBadge,0);
   const h=location.hash.slice(1);
   if(h.startsWith("route-"))return;
   closeMapView();
@@ -133,8 +133,16 @@ function onPos(p){S.lastPos=p;
     const r=routeData&&routeData.route;if(r){let best=0,bd=1e12;for(let i=0;i<r.coords.length;i+=Math.max(1,Math.floor(r.coords.length/2000))){const d=dist([p.lat,p.lng],r.coords[i]);if(d<bd){bd=d;best=i}}
       const st=r.steps.find(s=>s.at>best)||r.steps[r.steps.length-1];const el=$("#nextStep");if(el&&st){el.querySelector("span").textContent=st.text;el.querySelector("small").textContent=fkm(dist([p.lat,p.lng],r.coords[Math.min(st.at,r.coords.length-1)]))}}}
   sendPos(p)}
-function sendPos(p){const cur=S.orders.find(o=>ACTIVE.includes(o.status));if(!cur)return;if(Date.now()-S.lastSent<60000)return;S.lastSent=Date.now();api("/api/driver/position",{method:"POST",json:{lat:p.lat,lng:p.lng,acc:p.acc,orderId:cur.id}}).catch(()=>{})}
-function startGeo(){if(S.geo!=null||!("geolocation" in navigator))return;S.geo=navigator.geolocation.watchPosition(x=>onPos({lat:x.coords.latitude,lng:x.coords.longitude,acc:x.coords.accuracy}),()=>{},{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}
+/* Positie: elke 30 s tijdens een rit of in tabletmodus (de tablet blijft in de vrachtwagen). */
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};const lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
+const tabletMode=()=>lsGet("ghotra_tablet")==="1";
+const sharing=()=>tabletMode()||S.orders.some(o=>ACTIVE.includes(o.status));
+function sendPos(p){if(!sharing())return;if(Date.now()-S.lastSent<30000)return;S.lastSent=Date.now();const cur=S.orders.find(o=>ACTIVE.includes(o.status));
+  api("/api/driver/position",{method:"POST",json:{lat:p.lat,lng:p.lng,acc:p.acc,speed:p.speed,orderId:cur?cur.id:null}}).then(()=>{S.posOk=Date.now();geoBadge()}).catch(()=>{})}
+function startGeo(){if(S.geo!=null||!("geolocation" in navigator))return;S.geo=navigator.geolocation.watchPosition(x=>onPos({lat:x.coords.latitude,lng:x.coords.longitude,acc:x.coords.accuracy,speed:x.coords.speed}),e=>{S.geoErr=e.code===1?"Locatie geweigerd":"Geen GPS-signaal";geoBadge()},{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}
+let wake=null;async function keepAwake(){if(!tabletMode()||!("wakeLock" in navigator)||document.visibilityState!=="visible")return;try{if(!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null})}}catch(e){}}
+function geoBadge(){const h=$("#hello");if(!h)return;let b=$("#geoB");if(!sharing()){if(b)b.remove();return}if(!b){b=document.createElement("span");b.id="geoB";b.style.cssText="font-size:12px;font-weight:600;padding:3px 8px;border-radius:999px;flex:none";h.after(b)}
+  const ok=S.posOk&&Date.now()-S.posOk<120000;b.textContent=ok?"📍 Live":S.geoErr?"📍 "+S.geoErr:"📍 Zoeken…";b.style.background=ok?"var(--ok-soft)":"var(--warn-soft)";b.style.color=ok?"var(--ok)":"var(--warn)"}
 function firstPosition(ms){if(S.lastPos)return Promise.resolve(S.lastPos);return new Promise(res=>{if(!("geolocation" in navigator))return res(null);const t=setTimeout(()=>res(S.lastPos),ms);navigator.geolocation.getCurrentPosition(x=>{clearTimeout(t);res({lat:x.coords.latitude,lng:x.coords.longitude,acc:x.coords.accuracy})},()=>{clearTimeout(t);res(null)},{enableHighAccuracy:true,timeout:ms,maximumAge:30000})})}
 
 /* ---------- sheets ---------- */
@@ -143,6 +151,7 @@ function closeSheet(){$("#sheet").hidden=true}
 function menu(){const b=S.me&&S.me.bedrijf||{};
   sheet("Menu",`<div class="list">
    <button class="row" data-act="pushon"><span class="grow"><span class="t1">Meldingen aanzetten</span><span class="t2">Seintje bij een nieuwe of gewijzigde rit</span></span></button>
+   <button class="row" data-act="tablet"><span class="grow"><span class="t1">Tabletmodus: ${tabletMode()?"aan":"uit"}</span><span class="t2">Voor de tablet die in de vrachtwagen blijft: scherm blijft aan en de positie gaat altijd naar kantoor</span></span><span class="pill ${tabletMode()?"s-gelost":"s-gefactureerd"}">${tabletMode()?"Aan":"Uit"}</span></button>
    <button class="row" data-act="ziek"><span class="grow"><span class="t1">Ziek melden</span><span class="t2">Kantoor krijgt meteen een bericht</span></span></button>
    ${b.tel?`<a class="row" href="tel:${esc(b.tel.replace(/\s/g,""))}"><span class="grow"><span class="t1">Bel kantoor</span><span class="t2 mono">${esc(b.tel)}</span></span></a>`:""}
    <button class="row" data-act="pwd"><span class="grow"><span class="t1">Wachtwoord wijzigen</span></span></button>
@@ -188,6 +197,7 @@ const ACT={
  follow:()=>{follow=!follow;const b=$("#followBtn");if(b)b.textContent=follow?"Volgen aan":"Volgen uit";if(follow&&S.lastPos)onPos(S.lastPos)},
  recalc:d=>{const o=byId(d.id);if(o)openRoute(o)},
  pushon:()=>enablePush(),
+ tablet:async()=>{const on=!tabletMode();lsSet("ghotra_tablet",on?"1":null);if(on){startGeo();await keepAwake();toast("Tabletmodus aan: laat de app open en de tablet aan de lader")}else{if(wake){wake.release().catch(()=>{});wake=null}toast("Tabletmodus uit")}geoBadge();menu()},
  ziek:()=>ziekSheet(), pwd:()=>pwdSheet(),
  logout:async()=>{try{await api("/api/logout",{method:"POST",json:{}})}catch(e){}location.href="/login"}
 };
@@ -215,6 +225,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
   const h=location.hash.slice(1);
   if(h.startsWith("route-")&&byId(h.slice(6)))openRoute(byId(h.slice(6)));else render();
   startEvents();
-  if(S.orders.some(o=>ACTIVE.includes(o.status)))startGeo();
+  if(sharing())startGeo();keepAwake();geoBadge();setInterval(geoBadge,30000);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")keepAwake()});
   setInterval(()=>{if(document.visibilityState==="visible")loadOrders().then(()=>{if(!location.hash.startsWith("#route-"))render()}).catch(()=>{})},120000);
 })();
