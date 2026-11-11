@@ -202,7 +202,11 @@ function serveFile(res, file, extraHeaders = {}) {
   const p = findPublic(file);
   if (!p) { res.writeHead(404); return res.end("Niet gevonden"); }
   const ext = path.extname(p);
-  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": ext === ".html" || file === "sw.js" ? "no-cache" : "public, max-age=3600", "x-content-type-options": "nosniff", ...extraHeaders });
+  // Altijd controleren of er een nieuwere versie is (304 als er niets veranderd is), zodat updates meteen zichtbaar zijn.
+  const st = fs.statSync(p), etag = '"' + st.size.toString(36) + "-" + Math.floor(st.mtimeMs).toString(36) + '"';
+  const headers = { "content-type": MIME[ext] || "application/octet-stream", "cache-control": "no-cache", etag, "x-content-type-options": "nosniff", ...extraHeaders };
+  if (res.req && res.req.headers["if-none-match"] === etag) { res.writeHead(304, headers); return res.end(); }
+  res.writeHead(200, headers);
   fs.createReadStream(p).pipe(res);
 }
 const redirect = (res, to) => { res.writeHead(302, { location: to }); res.end(); };
@@ -442,10 +446,24 @@ on("GET", "/api/route/:id", async (req, res, u, p) => {
 on("POST", "/api/driver/position", async (req, res, u) => {
   need(u, "driver"); const b = await jsonBody(req);
   if (![b.lat, b.lng].every(Number.isFinite)) throw httpErr(400, "Ongeldige positie");
+  const now = Date.now(), spd = Number.isFinite(+b.speed) && b.speed !== null ? Math.max(0, +b.speed) : null;
+  const orderId = b.orderId && store.get("orders", b.orderId) && store.get("orders", b.orderId).chauffeurId === u.driverId ? b.orderId : null;
   db.prepare("INSERT INTO positions(driverId,lat,lng,acc,at,orderId) VALUES(?,?,?,?,?,?) ON CONFLICT(driverId) DO UPDATE SET lat=excluded.lat,lng=excluded.lng,acc=excluded.acc,at=excluded.at,orderId=excluded.orderId")
-    .run(u.driverId, b.lat, b.lng, +b.acc || null, Date.now(), b.orderId || null);
-  emitOffice({ type: "pos", pos: { driverId: u.driverId, lat: b.lat, lng: b.lng, acc: +b.acc || null, at: Date.now(), orderId: b.orderId || null } });
+    .run(u.driverId, b.lat, b.lng, +b.acc || null, now, orderId);
+  // Spoor: hoogstens één punt per 20 s; ouder dan 30 dagen wordt opgeruimd.
+  const lastPt = db.prepare("SELECT at FROM track WHERE driverId=? ORDER BY at DESC LIMIT 1").get(u.driverId);
+  if (!lastPt || now - lastPt.at >= 20000) db.prepare("INSERT INTO track(driverId,at,lat,lng,speed,orderId) VALUES(?,?,?,?,?,?)").run(u.driverId, now, b.lat, b.lng, spd, orderId);
+  if (Math.random() < 0.01) db.prepare("DELETE FROM track WHERE at<?").run(now - 30 * 864e5);
+  emitOffice({ type: "pos", pos: { driverId: u.driverId, lat: b.lat, lng: b.lng, acc: +b.acc || null, at: now, orderId, speed: spd } });
   send(res, 200, { ok: true });
+});
+
+on("GET", "/api/track/:driverId", (req, res, u, p) => {
+  need(u, "office");
+  const day = new URL(req.url, "http://x").searchParams.get("day") || todayLocal();
+  const from = new Date(day + "T00:00:00").getTime() - 3 * 3600e3, to = from + 30 * 3600e3;
+  const pts = db.prepare("SELECT at,lat,lng,speed FROM track WHERE driverId=? AND at BETWEEN ? AND ? ORDER BY at").all(p.driverId, from, to).filter(x => new Intl.DateTimeFormat("sv-SE", { timeZone: TZ }).format(new Date(x.at)) === day);
+  send(res, 200, pts);
 });
 
 // --- chauffeur ---
