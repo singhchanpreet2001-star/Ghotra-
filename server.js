@@ -444,6 +444,13 @@ on("GET", "/api/route/:id", async (req, res, u, p) => {
     send(res, 200, { configured: true, leg, start, end, laad: A, los: B, route: r, vehicle: { hoogte: v.hoogte, breedte: v.breedte, lengte: v.lengte, massa: v.massa }, links: fallback.links });
   } catch (e) { if (e.status) throw e; throw httpErr(502, e.message); }
 });
+on("GET", "/api/traffic/:z/:x/:y", async (req, res, u, p) => {
+  need(u); const [z, x, y] = [p.z, p.x, p.y].map(Number);
+  if (![z, x, y].every(Number.isInteger) || z < 5 || z > 19 || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) throw httpErr(400, "Ongeldige tegel");
+  if (!here.configured()) throw httpErr(404, "Geen HERE-sleutel");
+  let buf; try { buf = await here.trafficTile(z, x, y); } catch (e) { res.writeHead(204, { "cache-control": "no-store" }); return res.end(); }
+  res.writeHead(200, { "content-type": "image/png", "content-length": buf.length, "cache-control": "private, max-age=120" }); res.end(buf);
+});
 on("POST", "/api/driver/position", async (req, res, u) => {
   need(u, "driver"); const b = await jsonBody(req);
   if (![b.lat, b.lng].every(Number.isFinite)) throw httpErr(400, "Ongeldige positie");
