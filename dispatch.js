@@ -75,7 +75,7 @@ const loaded={};
 function loadScript(u){return loaded[u]||(loaded[u]=new Promise((res,rej)=>{const s=document.createElement("script");s.src=u;s.onload=res;s.onerror=()=>{delete loaded[u];rej(new Error("Bibliotheek kon niet laden"))};document.head.appendChild(s)}))}
 function loadCss(u){if(loaded[u])return;loaded[u]=1;const l=document.createElement("link");l.rel="stylesheet";l.href=u;document.head.appendChild(l)}
 async function jsPDF(){await loadScript(LIB.jspdf);return window.jspdf.jsPDF}
-async function leaflet(){loadCss(LIB.leafletCss);await loadScript(LIB.leafletJs);return window.L}
+async function loadLeaflet(){loadCss(LIB.leafletCss);await loadScript(LIB.leafletJs);return window.L}
 async function shrinkImage(file,max=2000){try{const bmp=await createImageBitmap(file);const s=Math.min(1,max/Math.max(bmp.width,bmp.height));const c=document.createElement("canvas");c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);
   c.getContext("2d").drawImage(bmp,0,0,c.width,c.height);return await new Promise(r=>c.toBlob(r,"image/jpeg",.82))}catch(e){return file}}
 
@@ -811,7 +811,7 @@ function shRoute(sh){const o=byId("orders",sh.id)||{};const t=`Route <span class
 let routeMap=null,truckMarker=null;
 let routeDraw=0;
 async function drawRoute(){const sh=S.sheet;if(!sh||sh.type!=="route"||sh.state!=="ok"||!sh.data.configured)return;const d=sh.data;const my=++routeDraw;
-  try{const L=await leaflet();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(my!==routeDraw||S.sheet!==sh)return;
+  try{const L=await loadLeaflet();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(my!==routeDraw||S.sheet!==sh)return;
     const el=$("#panel #map");if(!el)return;if(routeMap){try{routeMap.remove()}catch(e){}routeMap=null}truckMarker=null;if(el._leaflet_id)el._leaflet_id=null;
     routeMap=L.map(el,{zoomControl:true,attributionControl:true});
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(routeMap);
@@ -1078,7 +1078,7 @@ function vKaart(){const rows=fleetRows();
   <div class="notice"><b>Zo werkt het</b>De positie komt van de chauffeursapp. Zet op de tablet in de vrachtwagen <b>Menu → Tabletmodus</b> aan, laat de app open en de tablet aan de lader. Dan gaat de positie elke 30 seconden naar hier, ook zonder rit. Tik op een chauffeur voor zijn spoor van vandaag.</div>`}
 function truckIcon(L,r){const c=!r.p?"#9aa49e":posCls(r.p)==="live"?(r.o?"#7c4dcc":"#0d9466"):posCls(r.p)==="recent"?"#a96608":"#9aa49e";
   return L.divIcon({className:"",iconSize:[0,0],html:`<div style="transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center"><div style="background:${c};color:#fff;font:600 12px Inter,sans-serif;padding:3px 8px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3)">🚛 ${esc((r.d.naam||"").split(" ")[0])}${r.v?" · "+esc(r.v.kenteken):""}</div><div style="width:0;height:0;border:6px solid transparent;border-top-color:${c}"></div></div>`})}
-async function drawFleet(){const el=$("#fleetMap");if(!el)return;let L;try{L=await leaflet()}catch(e){el.outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
+async function drawFleet(){const el=$("#fleetMap");if(!el)return;let L;try{L=await loadLeaflet()}catch(e){el.outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
   if(fleetMap&&fleetMap.getContainer()!==el){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
   const first=!fleetMap;
   if(first){fleetMap=L.map(el);L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(fleetMap);fleetMap.setView([50.85,4.35],8)}
