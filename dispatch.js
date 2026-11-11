@@ -64,7 +64,7 @@ const I={
  x:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>'
 };
 const NAV=[["vandaag","Vandaag"],["ritten","Ritten"],["planning","Planning"],["mail","Mail"],["facturen","Facturen"],["meer","Beheer"]];
-const SUBVIEWS={documenten:"Documenten",klanten:"Klanten",chauffeurs:"Chauffeurs",voertuigen:"Voertuigen",bedrijf:"Bedrijfsgegevens",facturatie:"Facturatie",gebruikers:"Logins",koppelingen:"Koppelingen"};
+const SUBVIEWS={documenten:"Documenten",klanten:"Klanten",chauffeurs:"Chauffeurs",voertuigen:"Voertuigen",bedrijf:"Bedrijfsgegevens",kaart:"Vloot live",facturatie:"Facturatie",gebruikers:"Logins",koppelingen:"Koppelingen"};
 
 /* ---------- toast ---------- */
 let tt;function toast(m){const t=$("#toast");t.textContent=m;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,3600)}
@@ -116,13 +116,14 @@ function render(){
   $("#rail").innerHTML='<span class="logo" aria-hidden="true">G</span>'+navHTML();
   const titles={vandaag:"Vandaag",ritten:"Ritten",planning:"Planning",mail:"Mail",facturen:"Facturen",meer:"Beheer",...SUBVIEWS};
   $("#title").textContent=titles[S.view]||"";
-  $("#addBtn").hidden=["meer","bedrijf","koppelingen","facturatie"].includes(S.view);
+  $("#addBtn").hidden=["meer","bedrijf","koppelingen","facturatie","kaart"].includes(S.view);
   $("#aiBtn").hidden=!S.me;
   const v=$("#view");
   if(!db&&S.dbState==="off"){v.innerHTML=`<div class="notice err"><b>Server niet bereikbaar</b>Herlaad de pagina.</div>`;return}
   if(S.dbErr){v.innerHTML=`<div class="notice err"><b>Gegevens niet bereikbaar</b>De verbinding met de opslag is verbroken. Herlaad de pagina.</div>`;return}
-  const fn={vandaag:vVandaag,ritten:vRitten,planning:vPlanning,mail:vMail,facturen:vFacturen,meer:vMeer,documenten:vDocumenten,facturatie:vFacturatie,gebruikers:vGebruikers,koppelingen:vKoppelingen,klanten:vKlanten,chauffeurs:vChauffeurs,voertuigen:vVoertuigen,bedrijf:vBedrijf}[S.view]||vVandaag;
+  const fn={vandaag:vVandaag,ritten:vRitten,planning:vPlanning,mail:vMail,facturen:vFacturen,meer:vMeer,documenten:vDocumenten,kaart:vKaart,facturatie:vFacturatie,gebruikers:vGebruikers,koppelingen:vKoppelingen,klanten:vKlanten,chauffeurs:vChauffeurs,voertuigen:vVoertuigen,bedrijf:vBedrijf}[S.view]||vVandaag;
   v.innerHTML=(S.slow&&!allLoaded()?`<div class="notice">Gegevens zijn nog niet bereikbaar. Wat je ziet kan onvolledig zijn.</div>`:"")+fn();
+  if(S.view==="kaart")drawFleet();else if(fleetMap){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
   if(S.view==="planning"&&S.cal.mode==="maand"){const box=v.querySelector(".calbox"),key=S.cal.y+"-"+S.cal.m;if(box){if(S._rosterKey===key&&S._rosterScroll!=null)box.scrollLeft=S._rosterScroll;else{const td=box.querySelector("thead th.td");box.scrollLeft=td?Math.max(0,td.offsetLeft-box.querySelector(".nm").offsetWidth-60):0;S._rosterKey=key;S._rosterScroll=box.scrollLeft}box.onscroll=()=>{S._rosterScroll=box.scrollLeft}}}
 }
 const allLoaded=()=>COLS.every(c=>S.loaded[c]);
@@ -158,6 +159,7 @@ function vVandaag(){
     <button class="kpi" data-act="nav" data-v="mail"><span class="lbl">Ongelezen mail</span><span class="v">${S.mail.state==="ok"?unread:"–"}</span></button>
   </div>
   ${S.drivers.length?`<section class="sec"><div class="sec-h"><h2>Beschikbaarheid</h2><button class="btn sm" data-act="nav" data-v="planning">Kalender</button></div><div class="avail">${S.drivers.slice().sort((a,b)=>(a.naam||"").localeCompare(b.naam||"")).map(d=>{const st=driverStatus(d),a=absOn(d.id,t);return `<button class="av ${sCls(st)}" data-act="${a?"edit-absences":"newabs"}" data-id="${a?a.id:d.id}" title="${a?esc(abLabel(a)):"Ziekte of verlof ingeven"}"><i></i><span>${esc(d.naam)}<br><small>${esc(a?abLabel(a):st)}</small></span></button>`}).join("")}</div></section>`:""}
+  ${fleetCard()}
   <section class="sec"><div class="sec-h"><h2>Planning per chauffeur</h2><small>${vandaag.length} ritten</small></div>
    ${vandaag.length?`<div class="board">${board}</div>`:`<div class="list"><div class="empty">Geen ritten voor vandaag gepland.<button class="btn primary sm" data-act="new" data-col="orders">Rit plannen</button></div></div>`}</section>
   <section class="sec"><div class="sec-h"><h2>Aandacht nodig</h2><small>${al.length||""}</small></div>
@@ -941,6 +943,10 @@ Object.assign(ACT,{
  deldoc:async(d,btn)=>{if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Zeker? Tik nogmaals";return}
    const x=byId("documents",d.id);if(await del("documents",d.id)){if(x&&x.asset)api(`/api/files/${x.asset.id}`,{method:"DELETE"}).catch(()=>{});closeSheet();toast("Document verwijderd")}},
  route:d=>openRoute(d.id),
+ fleetfocus:async d=>{if(!fleetMap)return;const L=window.L;const p=(S.positions||[]).find(x=>x.driverId===d.id);if(fleetTrail){fleetTrail.remove();fleetTrail=null}
+   try{const pts=await api(`/api/track/${encodeURIComponent(d.id)}`);if(pts.length>1){fleetTrail=L.polyline(pts.map(x=>[x.lat,x.lng]),{color:"#7c4dcc",weight:4,opacity:.75}).addTo(fleetMap);fleetTrail._drv=d.id}}catch(e){}
+   if(fleetTrail)fleetMap.fitBounds(fleetTrail.getBounds().extend(p?[p.lat,p.lng]:fleetTrail.getBounds().getCenter()),{padding:[30,30],maxZoom:14});else if(p)fleetMap.setView([p.lat,p.lng],13);else toast("Nog geen positie van deze chauffeur");
+   if(p&&fleetMarkers[d.id])fleetMarkers[d.id].openTooltip();$("#fleetMap").scrollIntoView({behavior:"smooth",block:"start"})},
  account:()=>openSheet({type:"account"}),
  newuser:()=>openSheet({type:"newuser"}),
  logout:async()=>{try{await api("/api/logout",{method:"POST",json:{}})}catch(e){}location.href="/login"},
@@ -1032,6 +1038,32 @@ function vFacturatie(){const v={aan:"ja",vrijeUren:2,afronding:"15",...(S.factur
   return `<form class="form" data-form="facturatie">${F.facturatie.fields.map(f=>fieldHTML(f,v)).join("")}<div class="full actions"><button class="btn primary" type="submit">Opslaan</button></div></form>
   <div class="notice"><b>Zo werkt het</b>De app meet per laad- en losplaats de tijd tussen de knoppen van de chauffeur: bij laden van "start laden" tot "geladen · vertrek", bij lossen van "start lossen" tot "gelost". Wat boven de vrije tijd gaat, komt als extra regel op de conceptfactuur. Per rit kun je een eigen tarief of vrije tijd invullen; leeg = deze standaard.<br><br>Voorbeeld: aangekomen 08:00, vertrokken 10:40 = 2 u 40 ter plaatse. Met ${fmin(vr*60)} vrij en afronding per kwartier wordt ${fmin(Math.ceil(Math.max(0,160-vr*60)/15)*15)} × ${eur(ex)} = ${eur(Math.ceil(Math.max(0,160-vr*60)/15)*15/60*ex)}.</div>`}
 
+
+/* ---------- live kaart van de vloot ---------- */
+let fleetMap=null,fleetMarkers={},fleetTrail=null;
+const posAge=p=>Date.now()-p.at;
+const posCls=p=>posAge(p)<5*60e3?"live":posAge(p)<60*60e3?"recent":"oud";
+function fleetRows(){return S.drivers.slice().sort((a,b)=>(a.naam||"").localeCompare(b.naam||"")).map(d=>{const p=(S.positions||[]).find(x=>x.driverId===d.id);const o=S.orders.find(x=>x.chauffeurId===d.id&&ACTIVE.includes(x.status))||(p&&p.orderId&&byId("orders",p.orderId));const v=o&&voertuig(o);return{d,p,o,v}})}
+function fleetCard(){const rows=fleetRows().filter(r=>r.p);const live=rows.filter(r=>posCls(r.p)==="live").length;
+  return `<section class="sec"><div class="sec-h"><h2>Vloot live</h2><button class="btn sm" data-act="nav" data-v="kaart">Kaart openen</button></div>
+   <button class="kpi" data-act="nav" data-v="kaart" style="flex-direction:row;align-items:center;gap:14px"><span class="v">${live}</span><span><b>${live===1?"vrachtwagen":"vrachtwagens"} live op de kaart</b><br><span class="muted" style="font-size:12.5px">${rows.length?rows.length+" met een positie · ":"Nog geen posities. "}${rows.length?"tik om te volgen":"Zet tabletmodus aan in de chauffeursapp."}</span></span></button></section>`}
+function vKaart(){const rows=fleetRows();
+  return `<div id="fleetMap" class="map" style="height:min(62vh,560px)"></div>
+  <div class="list">${rows.map(r=>{const c=r.p?posCls(r.p):"";return `<button class="row" data-act="fleetfocus" data-id="${r.d.id}"><span class="status-dot ${c==="live"?"on":"off"}" style="${c==="recent"?"background:var(--warn)":""}"></span><span class="grow"><span class="t1">${esc(r.d.naam)}${r.v?` <span class="plate">${esc(r.v.kenteken)}</span>`:""}</span><span class="t2">${r.o?esc(r.o.ref)+" · "+esc(r.o.status)+" · "+esc(r.o.laadplaats)+" → "+esc(r.o.losplaats):"Geen actieve rit"}</span></span><span class="t2 muted">${r.p?ago(r.p.at)+(r.p.speed!=null&&posAge(r.p)<5*60e3?" · "+Math.round(r.p.speed*3.6)+" km/u":""):"geen positie"}</span></button>`}).join("")||'<div class="empty">Nog geen chauffeurs.</div>'}</div>
+  <div class="notice"><b>Zo werkt het</b>De positie komt van de chauffeursapp. Zet op de tablet in de vrachtwagen <b>Menu → Tabletmodus</b> aan, laat de app open en de tablet aan de lader. Dan gaat de positie elke 30 seconden naar hier, ook zonder rit. Tik op een chauffeur voor zijn spoor van vandaag.</div>`}
+function truckIcon(L,r){const c=!r.p?"#9aa49e":posCls(r.p)==="live"?(r.o?"#7c4dcc":"#0d9466"):posCls(r.p)==="recent"?"#a96608":"#9aa49e";
+  return L.divIcon({className:"",iconSize:[0,0],html:`<div style="transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center"><div style="background:${c};color:#fff;font:600 12px Inter,sans-serif;padding:3px 8px;border-radius:8px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3)">🚛 ${esc((r.d.naam||"").split(" ")[0])}${r.v?" · "+esc(r.v.kenteken):""}</div><div style="width:0;height:0;border:6px solid transparent;border-top-color:${c}"></div></div>`})}
+async function drawFleet(){const el=$("#fleetMap");if(!el)return;let L;try{L=await leaflet()}catch(e){el.outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
+  if(fleetMap&&fleetMap.getContainer()!==el){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
+  const first=!fleetMap;
+  if(first){fleetMap=L.map(el);L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(fleetMap);fleetMap.setView([50.85,4.35],8)}
+  const rows=fleetRows().filter(r=>r.p),seen=new Set();
+  rows.forEach(r=>{seen.add(r.d.id);const ll=[r.p.lat,r.p.lng];const tip=`${r.d.naam}${r.v?" · "+r.v.kenteken:""}<br>${r.o?r.o.ref+" · "+r.o.status:"Geen actieve rit"}<br>${ago(r.p.at)}`;
+    if(fleetMarkers[r.d.id])fleetMarkers[r.d.id].setLatLng(ll).setIcon(truckIcon(L,r)).setTooltipContent(tip);
+    else fleetMarkers[r.d.id]=L.marker(ll,{icon:truckIcon(L,r)}).addTo(fleetMap).bindTooltip(tip,{direction:"top",offset:[0,-30]}).on("click",()=>ACT.fleetfocus({id:r.d.id}))});
+  Object.keys(fleetMarkers).forEach(k=>{if(!seen.has(k)){fleetMarkers[k].remove();delete fleetMarkers[k]}});
+  if(first&&rows.length)fleetMap.fitBounds(L.latLngBounds(rows.map(r=>[r.p.lat,r.p.lng])).pad(.3),{maxZoom:12})}
+
 /* ---------- e-factuur (Peppol BIS Billing 3.0 / UBL) ---------- */
 const isBEklant=k=>/^BE/i.test(String((k||{}).btw||"").replace(/\s/g,""));
 const xmlEsc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&apos;"}[c]));
@@ -1094,7 +1126,7 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
       else if(S.view!=="mail"){S.mail.state="idle"}
       const f=items[0];toast(items.length===1?`Nieuwe mail van ${f.fromName||f.from}: ${f.subject||"(geen onderwerp)"}`:`${items.length} nieuwe mails`);
       render();return}
-    if(m.type==="pos"){S.positions=S.positions||[];const i=S.positions.findIndex(p=>p.driverId===m.pos.driverId);if(i>=0)S.positions[i]=m.pos;else S.positions.push(m.pos);updateTruck()}}}
+    if(m.type==="pos"){S.positions=S.positions||[];const i=S.positions.findIndex(p=>p.driverId===m.pos.driverId);if(i>=0)S.positions[i]=m.pos;else S.positions.push(m.pos);updateTruck();if(S.view==="kaart"&&fleetMap)drawFleet();if(fleetTrail&&fleetTrail._drv===m.pos.driverId)fleetTrail.addLatLng([m.pos.lat,m.pos.lng])}}}
 
 /* ---------- boot ---------- */
 (async function boot(){
