@@ -913,6 +913,8 @@ function vMeer(){const admin=S.me&&S.me.role==="admin",st=S.status||{};
   const items=[["jarvis","🤖 Jarvis",(()=>{const c=(S.jarvis||{}).config||{};return (!c.aan?"Staat uit":c.proef?"Proefmodus":"Automatisch")+" · "+jOpen().length+" vragen"})()],["documenten","Documenten",S.documents.length+" bestanden · vergunningen, verzekeringen, contracten"],["klanten","Klanten",S.customers.length+" klanten"],["chauffeurs","Chauffeurs",S.drivers.length+" chauffeurs · logins voor de chauffeursapp"],["voertuigen","Voertuigen",S.vehicles.length+" voertuigen"],["bedrijf","Bedrijfsgegevens","Gebruikt op facturen en CMR"],["facturatie","Facturatie","Wachttijd: "+(waitCfg().aan?fmin(waitCfg().vrij*60)+" vrij"+(waitCfg().tarief?" · "+eur(waitCfg().tarief)+"/u":" · nog geen tarief"):"uit")],["gebruikers","Logins",(S.users||[]).length+" logins voor kantoor en chauffeurs"],["koppelingen","Koppelingen",[st.mail?"mail ✓":"mail —",st.ai?"AI ✓":"AI —",st.here?"routes ✓":"routes —"].join(" · ")]];
   return `<div class="list">${items.map(([k,l,s])=>`<button class="row" data-act="nav" data-v="${k}"><span class="grow"><span class="t1">${l}</span><span class="t2">${s}</span></span><span class="muted">›</span></button>`).join("")}</div>
   <section class="sec"><h2>Mijn account</h2><div class="list"><button class="row" data-act="account"><span class="grow"><span class="t1">${esc((S.me||{}).name||(S.me||{}).email||"")}</span><span class="t2">${esc((S.me||{}).email||"")} · ${admin?"Beheerder":"Dispatch"}</span></span><span class="muted">›</span></button></div></section>
+  ${admin?`<section class="sec"><h2>Opnieuw beginnen</h2><div class="notice warn"><b>Alle ritten en facturen wissen</b><span>Handig na het testen. Gewist worden: alle ritten en facturen (met CMR's en order-PDF's), het Jarvis-logboek en zijn vragen, en de Jarvis-labels op mails. De nummering begint opnieuw.</span><span>Blijven bewaard: koppelingen, klanten, chauffeurs, voertuigen, logins, documenten en instellingen.</span>
+   <form class="form" data-form="reset" style="margin-top:8px"><label class="field" for="rs_c"><span class="lbl">Typ WISSEN om te bevestigen</span><input id="rs_c" name="bevestig" autocomplete="off" placeholder="WISSEN"></label><div class="actions" style="align-self:end"><button class="btn danger" type="submit">Ritten en facturen wissen</button></div></form></div></section>`:""}
   ${hasVoorbeeld()?`<section class="sec"><h2>Voorbeeldgegevens</h2><div class="notice">Gegevens met het label <span class="tag">Voorbeeld</span> zijn testgegevens.<div><button class="btn danger" data-act="wipe">Voorbeeldgegevens wissen</button></div></div></section>`:""}`}
 
 function renderSheet(){const sh=S.sheet;if(!sh)return;const p=$("#panel");
@@ -1154,6 +1156,7 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
         if(m.col==="invoices"&&!prev&&d.status==="Concept")toast(`Conceptfactuur ${d.nr} klaar ter controle`)}
       liveRender()}
     if(m.type==="jact"){jarvisAct(m);return}
+    if(m.type==="reload"){reloadData().then(()=>{loadJarvis();render()});return}
     if(m.type==="mailinfo"&&m.item){const t=S.mail.threads.find(x=>x.box==="inbox"&&+x.uid===+m.item.uid);if(t)t.info=m.item;S.status=S.status||{};if(m.item.dringend&&!m.item.afgehandeld&&!(S._seenDr||(S._seenDr=new Set())).has(m.item.id)){S._seenDr.add(m.item.id);S.status.mailDringend=(S.status.mailDringend||0)+1;toast("🔴 Dringende mail: "+(m.item.samenvatting||m.item.subject))}
       if(m.item.afgehandeld&&!m.item.dringend)S.status.mailDringend=Math.max(0,(S.status.mailDringend||1)-1);
       if(S.view==="mail")render();if(S.sheet&&S.sheet.type==="thread")renderSheet();return}
@@ -1264,6 +1267,8 @@ document.addEventListener("input",e=>{if(e.target.id==="of_body")e.target.datase
 Object.assign(ACT,{
  joffer:d=>openSheet({type:"offer",id:d.id,besluit:d.v}),
  jremind:d=>{const i=byId("invoices",d.id);if(!i)return toast("Factuur niet gevonden");openSheet({type:"compose",draft:{...tpl("herinnering",i.id),herinnering:true}})}});
+SUBMIT.reset=async f=>{const v=f.elements.bevestig.value;if(v.trim().toUpperCase()!=="WISSEN"){toast("Typ WISSEN om te bevestigen");return}const btn=f.querySelector("[type=submit]");btn.disabled=true;btn.textContent="Wissen…";
+  try{const r=await api("/api/admin/reset",{method:"POST",json:{bevestig:v}});await reloadData();await loadJarvis();S.mail.state="idle";toast(`Gewist: ${r.ritten} ritten en ${r.facturen} facturen`);render()}catch(e){toast(e.message);btn.disabled=false;btn.textContent="Ritten en facturen wissen"}};
 SUBMIT.offer=async f=>{const btn=f.querySelector("[type=submit]");btn.disabled=true;btn.textContent="Versturen…";
   try{const fd=new FormData(f);await api(`/api/jarvis/item/${f.dataset.id}/offer`,{method:"POST",json:{besluit:f.dataset.b,bedrag:+fd.get("bedrag")||null,to:fd.get("to"),subject:fd.get("subject"),body:fd.get("body")}});
     toast(f.dataset.b==="akkoord"?"Akkoord verstuurd, rit aangemaakt":"Mail verstuurd");closeSheet();await reloadData();await loadJarvis()}

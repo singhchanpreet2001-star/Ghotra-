@@ -353,6 +353,21 @@ on("PATCH", "/api/users/:id", async (req, res, u, p) => {
   if (t.id === u.id && b.active === false) throw httpErr(400, "Je kunt jezelf niet uitschakelen");
   try { send(res, 200, auth.updateUser(p.id, b)); } catch (e) { throw httpErr(400, e.message); }
 });
+// Opnieuw beginnen: alle ritten en facturen wissen (koppelingen, klanten, chauffeurs, voertuigen en instellingen blijven).
+on("POST", "/api/admin/reset", async (req, res, u) => {
+  need(u, "admin"); const b = await jsonBody(req);
+  if (String(b.bevestig || "").trim().toUpperCase() !== "WISSEN") throw httpErr(400, "Typ WISSEN om te bevestigen");
+  const files = new Set(), n = {};
+  for (const o of store.all("orders")) { if (o.cmr && o.cmr.id) files.add(o.cmr.id); if (o.opdrachtPdf && o.opdrachtPdf.id) files.add(o.opdrachtPdf.id); }
+  for (const i of store.all("invoices")) { if (i.peppol && i.peppol.fileId) files.add(i.peppol.fileId); }
+  for (const col of ["orders", "invoices", "maillog", "jarvis", "mailinfo"]) { const all = store.all(col); n[col] = all.length; for (const r of all) store.del(col, r.id); }
+  for (const id of files) deleteFile(id);
+  db.prepare("DELETE FROM track").run(); db.prepare("UPDATE positions SET orderId=NULL").run();
+  store.setting("jarvisUpdate", null);
+  emitOffice({ type: "reload" });
+  console.log(`Opnieuw begonnen door ${u.email}:`, n);
+  send(res, 200, { ok: true, ritten: n.orders, facturen: n.invoices });
+});
 on("DELETE", "/api/users/:id", (req, res, u, p) => {
   need(u, "office"); const t = auth.findById(p.id); if (!t) throw httpErr(404, "Login niet gevonden");
   if (t.role !== "driver" && u.role !== "admin") throw httpErr(403, "Alleen een beheerder kan kantoorlogins verwijderen");
