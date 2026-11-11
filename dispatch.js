@@ -363,6 +363,7 @@ function shOrder(sh){const o=byId("orders",sh.id);if(!o)return sheetWrap("Rit",'
   ${tl.length?`<section class="sec"><span class="lbl">Tijden</span><div class="timeline">${tl.map(s=>`<div><span>${s}</span><span class="mono">${ftime(tij[s])}</span></div>`).join("")}</div></section>`:""}
   ${waitSummaryHTML(o)}
   ${["Lossen","Gelost","Gefactureerd"].includes(o.status)||o.cmr?cmrBlock(o):""}
+  ${assignBlock(o)}
   ${routeBlock(o,v)}
   <dl class="kv">
    <dt>Klant</dt><dd>${esc(k?k.naam:"—")}${o.referentieKlant?` <span class="muted">· ref ${esc(o.referentieKlant)}</span>`:""}</dd>
@@ -384,7 +385,6 @@ function shOrder(sh){const o=byId("orders",sh.id);if(!o)return sheetWrap("Rit",'
   <section class="sec"><div class="sec-h"><h2>Mail</h2><button class="btn sm" data-act="mailsearch" data-q="&quot;${esc(o.ref)}&quot;${o.referentieKlant?` OR &quot;${esc(o.referentieKlant)}&quot;`:""}">Zoek in mail</button></div>
    <div class="actions">
     <button class="btn sm" data-act="compose" data-tpl="bevestiging" data-id="${o.id}">Ritbevestiging aan klant</button>
-    <button class="btn sm" data-act="compose" data-tpl="chauffeur" data-id="${o.id}">Opdracht aan chauffeur</button>
     <button class="btn sm" data-act="compose" data-tpl="geleverd" data-id="${o.id}">Levering gemeld</button>
    </div>
    ${mails.length?`<div class="list">${mails.map(m=>`<button class="row" ${m.threadId?`data-act="thread" data-id="${esc(m.threadId)}"`:""}><span class="grow"><span class="t1">${esc(m.subject||"(geen onderwerp)")}</span><span class="t2">${m.kind==="sent"?"Verzonden aan "+esc(m.to||""):"Van "+esc(m.from||"")} · ${fdt(m.date)}</span></span></button>`).join("")}</div>`:`<div class="muted" style="font-size:13px">Nog geen mails aan deze rit gekoppeld.</div>`}
@@ -943,6 +943,14 @@ Object.assign(ACT,{
  deldoc:async(d,btn)=>{if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Zeker? Tik nogmaals";return}
    const x=byId("documents",d.id);if(await del("documents",d.id)){if(x&&x.asset)api(`/api/files/${x.asset.id}`,{method:"DELETE"}).catch(()=>{});closeSheet();toast("Document verwijderd")}},
  route:d=>openRoute(d.id),
+ assign:async d=>{const o=byId("orders",d.id);if(!o)return;const did=$("#as_d_"+d.id).value,vid=$("#as_v_"+d.id).value;
+   if(!did){toast("Kies een chauffeur");return}
+   const [f,t]=orderSpan(o),a=absInRange(did,f,t);if(a&&did!==o.chauffeurId){toast((byId("drivers",did)||{}).naam+" is "+abLabel(a).toLowerCase());return}
+   if(did===o.chauffeurId&&vid===(o.voertuigId||"")){toast("Er is niets gewijzigd");return}
+   const upd={chauffeurId:did,voertuigId:vid};if(did!==o.chauffeurId)upd.gezien=null;
+   if(await patch("orders",o.id,upd)){const n=(byId("drivers",did)||{}).naam||"de chauffeur";toast(hasLogin(did)?`Rit ${o.ref} staat in de app van ${n}`:`Toegewezen aan ${n}, maar hij heeft nog geen login voor de app`);renderSheet()}},
+ unassign:async(d,btn)=>{if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Zeker? Tik nogmaals";return}
+   const o=byId("orders",d.id);if(await patch("orders",d.id,{chauffeurId:"",gezien:null})){toast(`Rit ${o.ref} weggehaald bij de chauffeur`);renderSheet()}},
  fleetfocus:async d=>{if(!fleetMap)return;const L=window.L;const p=(S.positions||[]).find(x=>x.driverId===d.id);if(fleetTrail){fleetTrail.remove();fleetTrail=null}
    try{const pts=await api(`/api/track/${encodeURIComponent(d.id)}`);if(pts.length>1){fleetTrail=L.polyline(pts.map(x=>[x.lat,x.lng]),{color:"#7c4dcc",weight:4,opacity:.75}).addTo(fleetMap);fleetTrail._drv=d.id}}catch(e){}
    if(fleetTrail)fleetMap.fitBounds(fleetTrail.getBounds().extend(p?[p.lat,p.lng]:fleetTrail.getBounds().getCenter()),{padding:[30,30],maxZoom:14});else if(p)fleetMap.setView([p.lat,p.lng],13);else toast("Nog geen positie van deze chauffeur");
@@ -1038,6 +1046,20 @@ function vFacturatie(){const v={aan:"ja",vrijeUren:2,afronding:"15",...(S.factur
   return `<form class="form" data-form="facturatie">${F.facturatie.fields.map(f=>fieldHTML(f,v)).join("")}<div class="full actions"><button class="btn primary" type="submit">Opslaan</button></div></form>
   <div class="notice"><b>Zo werkt het</b>De app meet per laad- en losplaats de tijd tussen de knoppen van de chauffeur: bij laden van "start laden" tot "geladen · vertrek", bij lossen van "start lossen" tot "gelost". Wat boven de vrije tijd gaat, komt als extra regel op de conceptfactuur. Per rit kun je een eigen tarief of vrije tijd invullen; leeg = deze standaard.<br><br>Voorbeeld: aangekomen 08:00, vertrokken 10:40 = 2 u 40 ter plaatse. Met ${fmin(vr*60)} vrij en afronding per kwartier wordt ${fmin(Math.ceil(Math.max(0,160-vr*60)/15)*15)} × ${eur(ex)} = ${eur(Math.ceil(Math.max(0,160-vr*60)/15)*15/60*ex)}.</div>`}
 
+
+
+/* ---------- rit toewijzen aan chauffeur (via de app, niet via mail) ---------- */
+function assignBlock(o){if(["Gefactureerd","Geannuleerd"].includes(o.status))return"";
+  const c=chauffeur(o),v=voertuig(o),[f,t]=orderSpan(o),login=c&&hasLogin(c.id);
+  const opts=driverOpts(f,t,o.chauffeurId);
+  const vopts=[["","— geen voertuig —"],...S.vehicles.slice().sort((a,b)=>(a.kenteken||"").localeCompare(b.kenteken||"")).map(x=>[x.id,x.kenteken+(x.type?" · "+x.type:"")])];
+  const state=!c?`<div class="notice warn" style="margin:0"><b>Nog geen chauffeur</b>Kies een chauffeur en klik op Toewijzen. Hij krijgt de rit meteen in zijn app, met een melding.</div>`
+    :!login?`<div class="notice warn" style="margin:0"><b>${esc(c.naam)} heeft nog geen login voor de app</b>Maak er een aan bij Beheer → Chauffeurs, anders ziet hij de rit niet.<div><button class="btn sm" data-act="edit-drivers" data-id="${c.id}">Login aanmaken</button></div></div>`
+    :`<div class="notice ${o.gezien?"ok":""}" style="margin:0"><b>In de app van ${esc(c.naam)}</b>${o.gezien?"Gezien op "+ftime(o.gezien):"Verstuurd, nog niet geopend door de chauffeur"}${o.status!=="Gepland"?" · "+esc(o.status):""}</div>`;
+  return `<section class="sec"><span class="lbl">Chauffeur en voertuig</span>${state}
+   <div class="search"><select id="as_d_${o.id}" aria-label="Chauffeur">${opts.map(([a,b,dis])=>`<option value="${esc(a)}" ${a===(o.chauffeurId||"")?"selected":""} ${dis?"disabled":""}>${esc(b)}</option>`).join("")}</select>
+   <select id="as_v_${o.id}" aria-label="Voertuig">${vopts.map(([a,b])=>`<option value="${esc(a)}" ${a===(o.voertuigId||"")?"selected":""}>${esc(b)}</option>`).join("")}</select></div>
+   <div class="actions"><button class="btn primary" data-act="assign" data-id="${o.id}">${c?"Wijziging naar de app sturen":"Toewijzen en naar de app sturen"}</button>${c?`<button class="btn" data-act="unassign" data-id="${o.id}">Chauffeur weghalen</button>`:""}</div></section>`}
 
 /* ---------- live kaart van de vloot ---------- */
 let fleetMap=null,fleetMarkers={},fleetTrail=null;
