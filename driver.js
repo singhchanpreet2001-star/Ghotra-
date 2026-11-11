@@ -96,43 +96,109 @@ function renderDetail(o){
   const a=actionHTML(o);if(a){$("#act").hidden=false;$("#actInner").innerHTML=a}else $("#act").hidden=true;
   window.scrollTo(0,0)}
 
-/* ---------- route & navigatie ---------- */
-let map=null,meMarker=null,routeData=null,follow=true;
-function closeMapView(){if(map){map.remove();map=null;meMarker=null}$("#mapview").hidden=true;document.body.style.overflow=""}
+/* ---------- route & navigatie (zoals Maps: pijl, kaart draait mee, volgende afslag, stem, live verkeer) ---------- */
+let map=null,meMarker=null,routeData=null,routeLine=null,trafficLayer=null,endMarker=null,follow=true;
+const NAV={o:null,leg:null,cum:[],idx:0,heading:0,rot:0,prev:null,off:0,lastRecalc:0,spoken:{},timers:[],wake:null,arrived:false,busy:false};
+const voiceOn=()=>lsGet("ghotra_voice")!=="0";
+const stripRij=t=>String(t||"").replace(/\s*Rij [\d.,]+\s*k?m door\.?\s*$/i,"").trim()||String(t||"");
+function closeMapView(){window.removeEventListener("resize",layoutMap);NAV.timers.forEach(clearInterval);NAV.timers=[];if(NAV.wake){NAV.wake.release().catch(()=>{});NAV.wake=null}try{speechSynthesis.cancel()}catch(e){}
+  if(map){map.remove();map=null;meMarker=null;routeLine=null;trafficLayer=null;endMarker=null}NAV.o=null;$("#mapview").hidden=true;document.body.style.overflow=""}
 function loadCss(u){if(document.querySelector(`link[href="${u}"]`))return;const l=document.createElement("link");l.rel="stylesheet";l.href=u;document.head.appendChild(l)}
-function loadScript(u){return new Promise((res,rej)=>{if(window.L)return res();const s=document.createElement("script");s.src=u;s.onload=res;s.onerror=()=>rej(new Error("Kaart kon niet laden"));document.head.appendChild(s)})}
-async function openRoute(o){
-  const mv=$("#mapview");mv.hidden=false;document.body.style.overflow="hidden";$("#act").hidden=true;
-  mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.ref)} · ${FLOW.indexOf(o.status)<=1?esc(o.laadplaats):esc(o.losplaats)}</b></div><div class="busy" style="flex:1"><span class="spin"></span>Vrachtwagenroute berekenen…</div>`;
-  startGeo();
-  const pos=await firstPosition(6000);
-  const leg=FLOW.indexOf(o.status)<=1?"laad":"los";
-  let d;try{d=await api(`/api/route/${o.id}?leg=${leg}${pos?`&from=${pos.lat},${pos.lng}`:""}`)}
-  catch(e){mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button></div><div class="dwrap"><div class="notice err">${esc(e.message)}</div><a class="bigbtn" href="${esc(gmaps(addr(o,leg)))}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;return}
-  if(!d.configured){mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button></div><div class="dwrap"><div class="notice"><b>Vrachtwagenroutes zijn nog niet ingesteld door kantoor</b>Google Maps toont een autoroute: let zelf op hoogte, breedte en gewicht.</div><a class="bigbtn" href="${esc(gmaps(addr(o,leg)))}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;return}
-  routeData=d;const r=d.route;
-  mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r?`${fkm(r.length)} · ${fdur(r.duration)}`:"Je bent er"}</b>${r&&r.trafficDelay>120?`<span class="pill s-laden">+${fdur(r.trafficDelay)}</span>`:""}</div>
-   ${r?`<div class="next" id="nextStep"><span>${esc((r.steps[0]||{}).text||"Volg de route")}</span><small></small></div>`:""}
-   ${r&&r.notices.length?`<div class="notice warn" style="border-radius:0"><b>Let op</b>${r.notices.map(n=>esc(n.title)).join("<br>")}</div>`:""}
-   <div id="dmap" class="map"></div>
-   <div class="foot"><button class="btn sm" data-act="follow" id="followBtn">${follow?"Volgen aan":"Volgen uit"}</button><button class="btn sm" data-act="recalc" data-id="${o.id}">Opnieuw berekenen</button><span class="muted" style="font-size:12px;flex:1">${esc([d.vehicle.hoogte?"h "+d.vehicle.hoogte+" m":"",d.vehicle.breedte?"b "+d.vehicle.breedte+" m":"",d.vehicle.massa?d.vehicle.massa+" t":""].filter(Boolean).join(" · ")||"Geen voertuigmaten bekend")}</span><a class="btn sm" href="${esc(gmaps(addr(o,leg)))}" target="_blank" rel="noopener">Google Maps</a></div>`;
-  try{loadCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css");await loadScript("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js")}catch(e){$("#dmap").outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
-  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const el=$("#dmap");if(!el)return;
-  const L=window.L;if(map){try{map.remove()}catch(e){}map=null}if(el._leaflet_id)el._leaflet_id=null;
-  map=L.map(el,{zoomControl:false});L.control.zoom({position:"bottomright"}).addTo(map);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
-  const pts=r?r.coords:[[d.end.lat,d.end.lng]];
-  const line=L.polyline(pts,{color:"#0d9466",weight:7,opacity:.9}).addTo(map);
-  L.circleMarker([d.end.lat,d.end.lng],{radius:10,color:"#fff",weight:3,fillColor:leg==="laad"?"#a96608":"#c2352f",fillOpacity:1}).addTo(map).bindTooltip(d.end.label);
-  map.on("dragstart",()=>{follow=false;const b=$("#followBtn");if(b)b.textContent="Volgen uit"});
-  const fit=()=>{if(!map)return;map.invalidateSize();if(r)map.fitBounds(line.getBounds(),{padding:[30,30]});else map.setView([d.end.lat,d.end.lng],15)};fit();setTimeout(fit,250);
-  if(S.lastPos)onPos(S.lastPos)}
+function loadScript(u){return new Promise((res,rej)=>{if(window.L&&window.L.map)return res();const s=document.createElement("script");s.src=u;s.onload=res;s.onerror=()=>rej(new Error("Kaart kon niet laden"));document.head.appendChild(s)})}
 function dist(a,b){const R=6371e3,t=Math.PI/180,dl=(b[0]-a[0])*t,dn=(b[1]-a[1])*t,x=Math.sin(dl/2)**2+Math.cos(a[0]*t)*Math.cos(b[0]*t)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function bearing(a,b){const t=Math.PI/180,y=Math.sin((b[1]-a[1])*t)*Math.cos(b[0]*t),x=Math.cos(a[0]*t)*Math.sin(b[0]*t)-Math.sin(a[0]*t)*Math.cos(b[0]*t)*Math.cos((b[1]-a[1])*t);return(Math.atan2(y,x)/t+360)%360}
+function manIcon(st){if(!st)return"";const a=st.action||"",d=st.direction||"",sv=st.severity||"";
+  if(a==="arrive")return'<svg viewBox="0 0 24 24" width="38" height="38" fill="currentColor"><path d="M5 21V4h9l.4 2H20v9h-6l-.4-2H7v8z"/></svg>';
+  if(/roundabout/i.test(a))return`<svg viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="12" cy="13" r="4.5"/><path d="M12 8.5V2M9 5l3-3 3 3"/></svg>${st.exit?`<b style="font-size:14px;margin-left:-8px">${st.exit}</b>`:""}`;
+  let ang=0;if(/uturn/i.test(a))ang=180;else if(d==="left")ang=sv==="light"?-45:sv==="heavy"?-135:-90;else if(d==="right")ang=sv==="light"?45:sv==="heavy"?135:90;
+  return`<svg viewBox="0 0 24 24" width="38" height="38" style="transform:rotate(${ang}deg)" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V4M5 10l7-7 7 7"/></svg>`}
+function say(t){if(!voiceOn()||!("speechSynthesis" in window))return;try{const u=new SpeechSynthesisUtterance(t);u.lang="nl-BE";u.rate=1;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
+async function navWake(){try{if("wakeLock" in navigator&&!NAV.wake&&document.visibilityState==="visible"){NAV.wake=await navigator.wakeLock.request("screen");NAV.wake.addEventListener("release",()=>{NAV.wake=null})}}catch(e){}}
+function hinderHTML(r){const inc=(r&&r.incidents)||[],no=(r&&r.notices)||[];if(!inc.length&&!no.length)return"";
+  return `<details class="hinder"><summary>⚠ ${inc.length?inc.length+" "+(inc.length===1?"melding":"meldingen")+" op je route (werken, file, ongeval)":"Let op"}</summary>${[...inc.map(i=>esc(i.text)),...no.map(n=>esc(n.title))].slice(0,8).map(x=>`<div>${x}</div>`).join("")}</details>`}
+async function openRoute(o){
+  closeMapView();NAV.o=o;NAV.leg=FLOW.indexOf(o.status)<=1?"laad":"los";NAV.arrived=false;NAV.spoken={};NAV.idx=0;NAV.off=0;follow=true;
+  const mv=$("#mapview");mv.hidden=false;document.body.style.overflow="hidden";$("#act").hidden=true;
+  const dest=NAV.leg==="laad"?o.laadplaats:o.losplaats;
+  mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.ref)} · ${esc(dest)}</b></div><div class="busy" style="flex:1"><span class="spin"></span>Vrachtwagenroute berekenen…</div>`;
+  startGeo();navWake();
+  const pos=await firstPosition(6000);if(NAV.o!==o)return;
+  let d;try{d=await api(`/api/route/${o.id}?leg=${NAV.leg}${pos?`&from=${pos.lat},${pos.lng}`:""}`)}
+  catch(e){mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button></div><div class="dwrap"><div class="notice err">${esc(e.message)}</div><a class="bigbtn" href="${esc(gmaps(addr(o,NAV.leg)))}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;return}
+  if(NAV.o!==o)return;
+  if(!d.configured){mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button></div><div class="dwrap"><div class="notice"><b>Vrachtwagenroutes zijn nog niet ingesteld door kantoor</b>Google Maps toont een autoroute: let zelf op hoogte, breedte en gewicht.</div><a class="bigbtn" href="${esc(gmaps(addr(o,NAV.leg)))}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;return}
+  const v=d.vehicle||{};
+  mv.innerHTML=`<div class="bar"><button class="btn sm" data-act="closemap">‹ Terug</button><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(dest)}</b><button class="btn sm" data-act="voice" id="voiceBtn" aria-label="Stem">${voiceOn()?"🔊":"🔇"}</button></div>
+   <div class="next" id="nextStep"><span class="mi" id="nsIcon">${manIcon((d.route&&d.route.steps[0])||null)}</span><span class="nd" id="nsDist"></span><span class="nt" id="nsText">${esc(stripRij(d.route&&d.route.steps[0]&&d.route.steps[0].text)||"Volg de route")}</span></div>
+   <div id="hinder">${hinderHTML(d.route)}</div>
+   <div class="navwrap" id="navwrap"><div id="dmap"></div>
+    <div class="navbtns"><button class="nbtn" data-act="zoom" data-v="1" aria-label="Inzoomen">+</button><button class="nbtn" data-act="zoom" data-v="-1" aria-label="Uitzoomen">−</button></div>
+    <button class="nbtn wide" data-act="navmode" id="navBtn">Overzicht</button>
+    <div class="spd" id="spd"><b>0</b><small>km/u</small></div>
+    <div class="attr">© OpenStreetMap · verkeer HERE</div></div>
+   <div class="foot"><span class="eta"><b id="etaT">--:--</b><small id="etaR"></small></span><span class="muted" style="font-size:12px;flex:1;min-width:0">${esc([v.hoogte?"h "+v.hoogte+" m":"",v.breedte?"b "+v.breedte+" m":"",v.massa?v.massa+" t":""].filter(Boolean).join(" · ")||"Geen voertuigmaten bekend")}</span><button class="btn sm" data-act="recalc" data-id="${o.id}">↻ Herbereken</button><a class="btn sm" href="${esc(gmaps(addr(o,NAV.leg)))}" target="_blank" rel="noopener">Google Maps</a></div>`;
+  try{loadCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css");await loadScript("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js")}catch(e){$("#dmap").outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const el=$("#dmap");if(!el||NAV.o!==o)return;
+  const L=window.L;if(el._leaflet_id)el._leaflet_id=null;
+  map=L.map(el,{zoomControl:false,attributionControl:false,touchZoom:"center",scrollWheelZoom:"center",doubleClickZoom:"center",zoomSnap:0.5});
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+  trafficLayer=L.tileLayer("/api/traffic/{z}/{x}/{y}?t="+Date.now(),{maxZoom:19,minZoom:5,opacity:.9}).addTo(map);
+  map.on("dragstart",()=>{if(follow)setNavMode(false)});
+  setRoute(d);
+  meMarker=L.marker([0,0],{icon:L.divIcon({className:"",iconSize:[0,0],html:'<div class="arw" style="transform:translate(-50%,-50%)"><svg viewBox="0 0 40 40" width="44" height="44"><circle cx="20" cy="20" r="18" fill="rgba(13,148,102,.18)"/><path d="M20 5 L32 33 L20 26 L8 33 Z" fill="#0d9466" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg></div>'}),interactive:false,zIndexOffset:1000});
+  layoutMap();map.setView(pos?[pos.lat,pos.lng]:(d.start?[d.start.lat,d.start.lng]:[d.end.lat,d.end.lng]),17,{animate:false});
+  if(!S.lastPos&&pos)S.lastPos=pos;setNavMode(!!S.lastPos);
+  window.addEventListener("resize",layoutMap);
+  NAV.timers.push(setInterval(()=>{if(trafficLayer)trafficLayer.setUrl("/api/traffic/{z}/{x}/{y}?t="+Date.now())},120000));
+  NAV.timers.push(setInterval(()=>recalc(true),300000))}
+function setRoute(d){routeData=d;const r=d.route,L=window.L;const cum=[0];
+  if(r)for(let i=1;i<r.coords.length;i++)cum.push(cum[i-1]+dist(r.coords[i-1],r.coords[i]));NAV.cum=cum;NAV.idx=0;NAV.off=0;
+  const pts=r?r.coords:[[d.end.lat,d.end.lng]];
+  if(routeLine)routeLine.setLatLngs(pts);else routeLine=L.polyline(pts,{color:"#0d9466",weight:9,opacity:.85,lineCap:"round"}).addTo(map);
+  if(endMarker)endMarker.setLatLng([d.end.lat,d.end.lng]);else endMarker=L.circleMarker([d.end.lat,d.end.lng],{radius:11,color:"#fff",weight:3,fillColor:NAV.leg==="laad"?"#a96608":"#c2352f",fillOpacity:1}).addTo(map);
+  const h=$("#hinder");if(h)h.innerHTML=hinderHTML(r)}
+async function recalc(silent){const o=NAV.o;if(!o||NAV.busy)return;const p=S.lastPos;NAV.busy=true;NAV.lastRecalc=Date.now();
+  try{const d=await api(`/api/route/${o.id}?leg=${NAV.leg}${p?`&from=${p.lat},${p.lng}`:""}`);if(NAV.o!==o||!map||!d.configured)return;
+    const old=routeData&&routeData.route;setRoute(d);
+    if(d.route&&old&&silent&&d.route.trafficDelay-old.trafficDelay>300){toast("Meer file op je route: +"+fdur(d.route.trafficDelay));say("Let op, er is meer file op je route.")}
+    if(!silent)toast("Route opnieuw berekend");if(S.lastPos)onPos(S.lastPos)}
+  catch(e){if(!silent)toast(e.message)}finally{NAV.busy=false}}
+function layoutMap(){const w=$("#navwrap"),el=$("#dmap");if(!w||!el||!map)return;const W=w.clientWidth,H=w.clientHeight;
+  if(follow){const D=Math.ceil(2*Math.hypot(W/2,H*0.72))+40;Object.assign(el.style,{width:D+"px",height:D+"px",left:(W/2-D/2)+"px",top:(H*0.72-D/2)+"px",transform:`rotate(${-NAV.rot}deg)`})}
+  else Object.assign(el.style,{width:W+"px",height:H+"px",left:"0px",top:"0px",transform:"none"});
+  map.invalidateSize({pan:false})}
+function setNavMode(on){follow=on;const b=$("#navBtn");if(b)b.textContent=on?"Overzicht":"▲ Navigeren";if(!map)return;
+  if(on){map.dragging.disable();layoutMap();if(S.lastPos){map.setView([S.lastPos.lat,S.lastPos.lng],Math.max(map.getZoom(),16),{animate:false});onPos(S.lastPos)}}
+  else{map.dragging.enable();layoutMap();const r=routeData&&routeData.route;if(r&&routeLine){const rest=r.coords.slice(NAV.idx);map.fitBounds(window.L.latLngBounds(rest.length>1?rest:r.coords),{padding:[40,40]})}}}
+function nearest(ll){const c=routeData&&routeData.route&&routeData.route.coords;if(!c||!c.length)return{i:0,d:Infinity};let bi=NAV.idx,bd=Infinity;
+  const scan=(a,b,s)=>{for(let i=Math.max(0,a);i<Math.min(c.length,b);i+=s){const d=dist(ll,c[i]);if(d<bd){bd=d;bi=i}}};
+  scan(NAV.idx-20,NAV.idx+800,1);if(bd>150){scan(0,c.length,Math.max(1,Math.floor(c.length/3000)));scan(bi-60,bi+60,1)}return{i:bi,d:bd}}
 function onPos(p){S.lastPos=p;
-  if(map&&window.L){const L=window.L;if(!meMarker)meMarker=L.circleMarker([p.lat,p.lng],{radius:9,color:"#fff",weight:3,fillColor:"#7c4dcc",fillOpacity:1}).addTo(map);else meMarker.setLatLng([p.lat,p.lng]);
-    if(follow)map.setView([p.lat,p.lng],Math.max(map.getZoom(),15),{animate:true});
-    const r=routeData&&routeData.route;if(r){let best=0,bd=1e12;for(let i=0;i<r.coords.length;i+=Math.max(1,Math.floor(r.coords.length/2000))){const d=dist([p.lat,p.lng],r.coords[i]);if(d<bd){bd=d;best=i}}
-      const st=r.steps.find(s=>s.at>best)||r.steps[r.steps.length-1];const el=$("#nextStep");if(el&&st){el.querySelector("span").textContent=st.text;el.querySelector("small").textContent=fkm(dist([p.lat,p.lng],r.coords[Math.min(st.at,r.coords.length-1)]))}}}
+  if(map&&window.L&&NAV.o){const ll=[p.lat,p.lng],r=routeData&&routeData.route;
+    // rijrichting
+    if(p.heading!=null&&isFinite(p.heading)&&(p.speed||0)>1.5)NAV.heading=p.heading;
+    else if(NAV.prev&&dist(NAV.prev,ll)>12)NAV.heading=bearing(NAV.prev,ll);
+    if(!NAV.prev||dist(NAV.prev,ll)>12)NAV.prev=ll;
+    const n=nearest(ll);
+    if(n.d<40&&r){NAV.idx=Math.max(NAV.idx,n.i);if((p.speed||0)<1.5&&!(p.heading>=0)&&NAV.idx+1<r.coords.length)NAV.heading=bearing(r.coords[NAV.idx],r.coords[Math.min(NAV.idx+3,r.coords.length-1)])}
+    else if(r&&n.d<150)NAV.idx=n.i;
+    const delta=((NAV.heading-NAV.rot)%360+540)%360-180;NAV.rot+=delta;
+    meMarker.setLatLng(ll);if(!meMarker._map)meMarker.addTo(map);const a=meMarker.getElement()&&meMarker.getElement().querySelector(".arw");if(a)a.style.transform=`translate(-50%,-50%) rotate(${NAV.rot}deg)`;
+    if(follow){const el=$("#dmap");if(el)el.style.transform=`rotate(${-NAV.rot}deg)`;map.setView(ll,map.getZoom(),{animate:true,duration:0.8})}
+    const sp=$("#spd b");if(sp)sp.textContent=p.speed!=null&&isFinite(p.speed)?Math.round(p.speed*3.6):"–";
+    if(r){const cum=NAV.cum,last=r.coords.length-1,rem=Math.max(0,cum[last]-cum[NAV.idx]+(n.d<150?0:n.d));
+      const eta=new Date(Date.now()+r.duration*1000*(r.length?rem/r.length:0));
+      const et=$("#etaT"),er=$("#etaR");if(et)et.textContent=String(eta.getHours()).padStart(2,"0")+":"+String(eta.getMinutes()).padStart(2,"0");if(er)er.textContent=fkm(rem)+" · "+fdur(r.duration*(r.length?rem/r.length:0));
+      const endD=dist(ll,[routeData.end.lat,routeData.end.lng]);
+      if(endD<150||rem<120){if(!NAV.arrived){NAV.arrived=true;say("Je bent op je bestemming.");const ns=$("#nextStep");if(ns)ns.innerHTML=`<span class="mi">${manIcon({action:"arrive"})}</span><span class="nt">Je bent op je bestemming</span>`}}
+      else{const k=r.steps.findIndex(s=>s.at>NAV.idx),st=r.steps[k<0?r.steps.length-1:k];
+        if(st){const sd=Math.max(0,cum[Math.min(st.at,last)]-cum[NAV.idx]),txt=stripRij(st.text);
+          const ic=$("#nsIcon"),dd=$("#nsDist"),tt=$("#nsText");if(ic&&ic.dataset.k!==String(k)){ic.innerHTML=manIcon(st);ic.dataset.k=String(k);tt.textContent=txt}if(dd)dd.textContent=fkm(sd);
+          const far=(p.speed||0)>16?1200:500;
+          if(sd<far&&sd>far*0.6&&!NAV.spoken[k+"f"]){NAV.spoken[k+"f"]=1;say("Over "+fkm(Math.round(sd/100)*100||sd).replace("km","kilometer").replace(" m"," meter")+", "+txt)}
+          if(sd<(p.speed||0)*6+40&&!NAV.spoken[k+"n"]){NAV.spoken[k+"n"]=1;NAV.spoken[k+"f"]=1;say(txt)}}}
+      // van de route af: na 4 metingen opnieuw berekenen
+      if(n.d>70&&(p.acc||0)<60){if(++NAV.off>=4&&Date.now()-NAV.lastRecalc>25000){NAV.off=0;say("Route wordt opnieuw berekend.");recalc(true)}}else NAV.off=0}}
   sendPos(p)}
 /* Positie: elke 30 s tijdens een rit of in tabletmodus (de tablet blijft in de vrachtwagen). */
 const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};const lsSet=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}};
@@ -140,7 +206,7 @@ const tabletMode=()=>lsGet("ghotra_tablet")==="1";
 const sharing=()=>tabletMode()||S.orders.some(o=>ACTIVE.includes(o.status));
 function sendPos(p){if(!sharing())return;if(Date.now()-S.lastSent<30000)return;S.lastSent=Date.now();const cur=S.orders.find(o=>ACTIVE.includes(o.status));
   api("/api/driver/position",{method:"POST",json:{lat:p.lat,lng:p.lng,acc:p.acc,speed:p.speed,orderId:cur?cur.id:null}}).then(()=>{S.posOk=Date.now();geoBadge()}).catch(()=>{})}
-function startGeo(){if(S.geo!=null||!("geolocation" in navigator))return;S.geo=navigator.geolocation.watchPosition(x=>onPos({lat:x.coords.latitude,lng:x.coords.longitude,acc:x.coords.accuracy,speed:x.coords.speed}),e=>{S.geoErr=e.code===1?"Locatie geweigerd":"Geen GPS-signaal";geoBadge()},{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}
+function startGeo(){if(S.geo!=null||!("geolocation" in navigator))return;S.geo=navigator.geolocation.watchPosition(x=>onPos({lat:x.coords.latitude,lng:x.coords.longitude,acc:x.coords.accuracy,speed:x.coords.speed,heading:x.coords.heading}),e=>{S.geoErr=e.code===1?"Locatie geweigerd":"Geen GPS-signaal";geoBadge()},{enableHighAccuracy:true,maximumAge:1000,timeout:30000})}
 let wake=null;async function keepAwake(){if(!tabletMode()||!("wakeLock" in navigator)||document.visibilityState!=="visible")return;try{if(!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null})}}catch(e){}}
 function geoBadge(){const h=$("#hello");if(!h)return;let b=$("#geoB");if(!sharing()){if(b)b.remove();return}if(!b){b=document.createElement("span");b.id="geoB";b.style.cssText="font-size:12px;font-weight:600;padding:3px 8px;border-radius:999px;flex:none";h.after(b)}
   const ok=S.posOk&&Date.now()-S.posOk<120000;b.textContent=ok?"📍 Live":S.geoErr?"📍 "+S.geoErr:"📍 Zoeken…";b.style.background=ok?"var(--ok-soft)":"var(--warn-soft)";b.style.color=ok?"var(--ok)":"var(--warn)"}
@@ -195,8 +261,10 @@ const ACT={
  back:d=>setStep(d.id,d.v),
  route:d=>{location.hash="route-"+d.id},
  closemap:()=>{history.length>1?history.back():location.hash="rit-"+(location.hash.slice(7))},
- follow:()=>{follow=!follow;const b=$("#followBtn");if(b)b.textContent=follow?"Volgen aan":"Volgen uit";if(follow&&S.lastPos)onPos(S.lastPos)},
- recalc:d=>{const o=byId(d.id);if(o)openRoute(o)},
+ navmode:()=>setNavMode(!follow),
+ zoom:d=>{if(map)map.setZoom(map.getZoom()+(+d.v),{animate:true})},
+ voice:()=>{const on=!voiceOn();lsSet("ghotra_voice",on?null:"0");const b=$("#voiceBtn");if(b)b.textContent=on?"🔊":"🔇";toast(on?"Stem aan":"Stem uit");if(on)say("Stem staat aan.")},
+ recalc:()=>recalc(false),
  pushon:()=>enablePush(),
  tablet:async()=>{const on=!tabletMode();lsSet("ghotra_tablet",on?"1":null);if(on){startGeo();await keepAwake();toast("Tabletmodus aan: laat de app open en de tablet aan de lader")}else{if(wake){wake.release().catch(()=>{});wake=null}toast("Tabletmodus uit")}geoBadge();menu()},
  ziek:()=>ziekSheet(), pwd:()=>pwdSheet(),
