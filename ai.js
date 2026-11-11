@@ -97,11 +97,13 @@ Antwoord met alleen JSON:
 }
 
 // Assistent met tools die in de server draaien (alleen lezen).
-async function chat({ system, messages, tools }) {
-  const defs = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
+const WEB = (max = 5) => ({ type: "web_search_20250305", name: "web_search", max_uses: max, user_location: { type: "approximate", country: "BE", timezone: "Europe/Brussels" } });
+async function chat({ system, messages, tools, web = false }) {
+  const defs = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.inputSchema })).concat(web ? [WEB(4)] : []);
   const conv = messages.map(m => ({ role: m.role, content: String(m.content) }));
   for (let round = 0; round < 6; round++) {
     const j = await call({ system, messages: conv, tools: defs, maxTokens: 1500 });
+    if (j.stop_reason === "pause_turn") { conv.push({ role: "assistant", content: j.content }); continue; }
     if (j.stop_reason !== "tool_use") return textOf(j) || "(geen antwoord)";
     conv.push({ role: "assistant", content: j.content });
     const results = [];
@@ -119,4 +121,17 @@ async function chat({ system, messages, tools }) {
 // Korte tekst schrijven zonder tools (voor de updates van Jarvis).
 async function write({ system, prompt, maxTokens = 600 }) { return textOf(await call({ system, messages: [{ role: "user", content: prompt }], maxTokens })); }
 
-module.exports = { config, configured, orderFromFile, triageMail, checkCmr, chat, write };
+// Op het internet zoeken (bv. onderaannemers of nieuwe klanten). Geeft het JSON-antwoord en de bronnen terug.
+async function research({ system, prompt, maxUses = 6 }) {
+  const messages = [{ role: "user", content: prompt }], sources = new Map();
+  for (let i = 0; i < 5; i++) {
+    const j = await call({ system, messages, tools: [WEB(maxUses)], maxTokens: 4000 });
+    for (const b of j.content || []) if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) if (r.url) sources.set(r.url, r.title || r.url);
+    if (j.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: j.content }); continue; }
+    const text = textOf(j); let data = null; try { data = jsonOf(text); } catch { data = null; }
+    return { text, data, sources: [...sources].map(([url, title]) => ({ url, title })) };
+  }
+  throw new Error("Zoeken duurde te lang");
+}
+
+module.exports = { config, configured, orderFromFile, triageMail, checkCmr, chat, write, research };

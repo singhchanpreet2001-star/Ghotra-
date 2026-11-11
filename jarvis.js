@@ -2,12 +2,12 @@
 // Jarvis: de automatische piloot. Draait op de server, ook als niemand de app open heeft.
 // Doet zelf wat in Beheer → Jarvis aan staat, en legt de rest als vraag (met één klik) aan kantoor voor.
 
-const DEFAULTS = { aan: false, proef: true, orders: true, waakhond: true, assign: true, invoice: true, reminders: true, updateUren: 2, van: 7, tot: 19, weekend: false, herinneringNa: 3, herinneringOm: 14, maxHerinneringen: 3 };
+const DEFAULTS = { aan: false, proef: true, orders: true, waakhond: true, kansen: true, assign: true, invoice: true, reminders: true, updateUren: 2, van: 7, tot: 19, weekend: false, herinneringNa: 3, herinneringOm: 14, maxHerinneringen: 3 };
 const LIVE = ["Gepland", "Naar laadplaats", "Laden", "Naar losplaats", "Lossen"];
 const ACTIVE = LIVE.slice(1);
 
 module.exports = function createJarvis(x) {
-  const { officeOnline = () => false, store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ } = x;
+  const { phoneAlert = () => {}, officeOnline = () => false, store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ } = x;
   const cfg = () => ({ ...DEFAULTS, ...(store.get("config", "jarvis") || {}) });
   const z = n => String(n).padStart(2, "0");
   const addDays = (s, n) => { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
@@ -32,6 +32,7 @@ module.exports = function createJarvis(x) {
     const rust = /^(verval|lucy|mail|wijz)-/.test(key) ? 3650 * 864e5 : 24 * 3600e3;
     if (store.all("jarvis").some(j => j.key === key && j.open && (!j.klaar || (j.note !== "opgelost" && Date.now() - new Date(j.klaar).getTime() < rust)))) return;
     log("vraag", tekst, { open: true, key, actie: actie || null, ...opt });
+    try { phoneAlert(key, tekst); } catch {}
   }
   function closeKey(key, note) { for (const j of store.all("jarvis").filter(j => j.open && !j.klaar && j.key === key)) { const d = store.patch("jarvis", j.id, { klaar: new Date().toISOString(), door: "Jarvis", note: note || "opgelost" }); emitOffice({ type: "jarvis", item: d }); } }
   function prune() { const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at)); for (const j of all.slice(600)) if (!j.open || j.klaar) store.del("jarvis", j.id); }
@@ -250,7 +251,7 @@ module.exports = function createJarvis(x) {
         const was = driverName(o.chauffeurId);
         if (!hasOpen("ziek-" + o.id)) act(`${was} is ${a.type.toLowerCase()}. Ik zoek iemand anders voor ${o.ref}…`, { col: "orders", id: o.id });
         const pick = await pickDriver(o, [o.chauffeurId]);
-        if (pick && auto) { assign(o, pick, `${was} is ${a.type.toLowerCase()}`); log("ziek", `${was} is ${a.type.toLowerCase()}: rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}) gaat nu naar ${driverName(pick.driverId)} (${pick.why}).`, { ref: { col: "orders", id: o.id } }); closeKey("ziek-" + o.id); }
+        if (pick && auto) { try { phoneAlert("ziek-" + o.id, `${was} is ${a.type.toLowerCase()}. Rit ${o.ref} heb ik aan ${driverName(pick.driverId)} gegeven.`); } catch {} assign(o, pick, `${was} is ${a.type.toLowerCase()}`); log("ziek", `${was} is ${a.type.toLowerCase()}: rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}) gaat nu naar ${driverName(pick.driverId)} (${pick.why}).`, { ref: { col: "orders", id: o.id } }); closeKey("ziek-" + o.id); }
         else if (pick) ask("ziek-" + o.id, `${was} is ${a.type.toLowerCase()} maar heeft rit ${o.ref} (${fdt(o.laaddatum)}). Voorstel: ${driverName(pick.driverId)} (${pick.why}).`, { type: "assign", id: o.id, driverId: pick.driverId, vehicleId: pick.vehicleId, label: "Geef aan " + driverName(pick.driverId) });
         else ask("ziek-" + o.id, `${was} is ${a.type.toLowerCase()} maar heeft rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}). Er is geen andere chauffeur vrij. Zoek een oplossing of een onderaannemer.`, { type: "order", id: o.id });
         continue;
@@ -364,6 +365,8 @@ module.exports = function createJarvis(x) {
       else if (/^ziek-/.test(k)) { const o = store.get("orders", id); done = !o || !LIVE.includes(o.status) || !absentIn(o.chauffeurId, span(o)); }
       else if (/^inv-/.test(k)) { const i = store.get("invoices", id); done = !i || i.status !== "Concept"; }
       else if (/^offer-/.test(k)) done = false;
+      else if (/^sub-/.test(k)) { const o = store.get("orders", id); done = !o || !!o.chauffeurId || !LIVE.includes(o.status); }
+      else if (/^retour-/.test(k)) done = !O || !LIVE.includes(O.status);
       else if (/^(betaal|lucy)-/.test(k)) { const i = store.get("invoices", id); done = !i || i.status === "Betaald"; }
       else if (/^rem-/.test(k)) { done = !I || I.status !== "Open" || (I.herinneringen || []).length > (a.n || 0); }
       else if (/^waak-gezien-/.test(k)) done = !O || !!O.gezien || O.status !== "Gepland";
@@ -374,6 +377,103 @@ module.exports = function createJarvis(x) {
       else if (a.type === "cancel") done = !O || O.status === "Geannuleerd";
       if (done) { const d = store.patch("jarvis", j.id, { klaar: new Date().toISOString(), door: "Jarvis", note: "opgelost" }); emitOffice({ type: "jarvis", item: d }); }
     }
+  }
+
+  // ---------- 9. kansen: onderaannemers, nieuwe klanten, retourvracht (Jarvis zoekt op het internet) ----------
+  const searching = new Set();
+  function saveKansen(list, soort, extra = {}) {
+    const have = store.all("kansen"), out = [];
+    for (const b of list) {
+      const naam = String(b.naam || "").trim(); if (!naam) continue;
+      if (have.some(k => k.soort === soort && k.naam.toLowerCase() === naam.toLowerCase() && (k.voorRit || "") === (extra.voorRit || ""))) continue;
+      const id = uid(), k = store.put("kansen", id, { soort, naam, plaats: b.plaats || "", sector: b.sector || "", telefoon: b.telefoon || "", email: b.email || "", website: b.website || "", waarom: b.waarom || "", status: "nieuw", at: new Date().toISOString(), ...extra });
+      out.push(k);
+    }
+    if (out.length) emitOffice({ type: "kansen" });
+    return out;
+  }
+  const kList = l => l.slice(0, 4).map(b => b.naam + (b.plaats ? " (" + b.plaats + ")" : "") + (b.telefoon ? " " + b.telefoon : "")).join(", ");
+  const SYS_ZOEK = "Je bent een ervaren dispatcher en zakenontwikkelaar voor een Belgisch transportbedrijf (trekker met oplegger, internationaal Benelux/Frankrijk/Duitsland). Je zoekt op het internet naar echte bedrijven met hun contactgegevens. Verzin nooit bedrijven, telefoonnummers of e-mailadressen: laat een veld leeg als je het niet vond. Antwoord aan het einde met alleen het gevraagde JSON-blok.";
+  async function zoekOnderaannemers(o, reden) {
+    if (!ai.configured() || searching.has("sub-" + o.id) || store.all("kansen").some(k => k.voorRit === o.id)) return;
+    searching.add("sub-" + o.id);
+    try {
+      act(`Niemand vrij voor ${o.ref}. Ik zoek vervoerders rond ${o.laadplaats}…`, { col: "orders", id: o.id });
+      const r = await ai.research({ system: SYS_ZOEK, maxUses: 5, prompt: `Zoek 3 tot 5 transportbedrijven met eigen vrachtwagens (trekker + oplegger) in de buurt van ${(o.laadadres || o.laadplaats).replace(/\n/g, ", ")} die als onderaannemer/charter deze vracht kunnen rijden: ${o.laadplaats} → ${o.losplaats}, laden ${fdt(o.laaddatum)}${o.goederen ? ", " + o.goederen : ""}${o.gewicht ? ", " + o.gewicht + " kg" : ""}${o.adr ? ", ADR" : ""}. Kies bij voorkeur bedrijven die ook richting ${o.losplaats} rijden.
+JSON: {"bedrijven":[{"naam":"","plaats":"","telefoon":"","email":"","website":"","waarom":"één korte zin"}]}` });
+      const list = ((r.data && r.data.bedrijven) || []).filter(b => b && b.naam).slice(0, 5);
+      const saved = saveKansen(list, "onderaannemer", { voorRit: o.id, rit: `${o.ref} ${o.laadplaats} → ${o.losplaats}`, bronnen: r.sources.slice(0, 6) });
+      if (saved.length) ask("sub-" + o.id, `🔎 ${reden} Voor ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}) vond ik ${saved.length} mogelijke onderaannemers: ${kList(saved)}. Bel er eentje, of geef de rit toch aan een eigen chauffeur.`, { type: "kansen", id: o.id, label: "Bekijk de vervoerders" });
+      else log("kansen", `Ik vond geen geschikte onderaannemers rond ${o.laadplaats} voor ${o.ref}.`, { ref: { col: "orders", id: o.id } });
+    } catch (e) { log("fout", `Onderaannemers zoeken lukte niet: ${e.message}`); }
+    finally { searching.delete("sub-" + o.id); }
+  }
+  async function zoekKlanten(handmatig) {
+    if (!ai.configured()) throw Object.assign(new Error("AI is niet gekoppeld"), { status: 409 });
+    if (searching.has("klanten")) return { bezig: true }; searching.add("klanten");
+    try {
+      const b = bedrijf(), O = store.all("orders"), lanes = {};
+      for (const o of O) { const k = `${(o.laadplaats || "").split(",")[0]} → ${(o.losplaats || "").split(",")[0]}`; lanes[k] = (lanes[k] || 0) + 1; }
+      const top = Object.entries(lanes).sort((a, z) => z[1] - a[1]).slice(0, 5).map(x => x[0]).join("; ");
+      const known = store.all("customers").map(c => c.naam).concat(store.all("kansen").filter(k => k.soort === "klant").map(k => k.naam));
+      act("Ik zoek nieuwe klanten op het internet…", { view: "jarvis" });
+      const r = await ai.research({ system: SYS_ZOEK, maxUses: 6, prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen").replace(/\n/g, ", ")}. Wij rijden met trekker + oplegger (13,6 m), nationaal en internationaal.${top ? " Onze huidige routes: " + top + "." : ""}
+Zoek 5 tot 8 bedrijven die regelmatig volle vrachten (FTL) laten vervoeren en die een goede nieuwe klant voor ons kunnen zijn: verladers (productie, groothandel, distributiecentra) binnen ongeveer 60 km van ons, of op onze routes. Geen andere transportbedrijven of expediteurs. Sla deze bekende namen over: ${known.slice(0, 60).join(", ") || "(geen)"}.
+Geef per bedrijf naam, plaats, sector, telefoon, e-mail (algemeen of logistiek), website en één zin waarom ze interessant zijn (bv. wat ze vervoeren).
+JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"","website":"","waarom":""}]}` });
+      const saved = saveKansen(((r.data && r.data.bedrijven) || []).filter(x => x && x.naam).slice(0, 8), "klant", { bronnen: r.sources.slice(0, 8) });
+      store.setting("jarvisKlantenGezocht", new Date().toISOString());
+      if (saved.length) log("kansen", `Ik vond ${saved.length} mogelijke nieuwe klanten: ${kList(saved)}. Je vindt ze onder Kansen.`, { actie: { type: "kansen" } });
+      else log("kansen", "Ik vond deze keer geen nieuwe klanten.");
+      return { gevonden: saved.length };
+    } finally { searching.delete("klanten"); }
+  }
+  // Vaste opdrachtgevers: grote logistieke bedrijven die op lange termijn met onderaannemers (charters) werken.
+  async function zoekPartners() {
+    if (!ai.configured()) throw Object.assign(new Error("AI is niet gekoppeld"), { status: 409 });
+    if (searching.has("partners")) return { bezig: true }; searching.add("partners");
+    try {
+      const b = bedrijf(), v = store.all("vehicles").filter(x => x.type !== "Oplegger").length || store.all("drivers").length || 1;
+      const known = store.all("customers").map(c => c.naam).concat(store.all("kansen").filter(k => k.soort === "partner").map(k => k.naam));
+      act("Ik zoek betrouwbare vaste opdrachtgevers in Europa…", { view: "jarvis" });
+      const r = await ai.research({ system: SYS_ZOEK, maxUses: 8, prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen, België").replace(/\n/g, ", ")}. Wij zijn een kleine vervoerder met ongeveer ${v} trekker(s) + oplegger (13,6 m, tautliner), internationaal rijden mag.
+Zoek 5 tot 8 grote, betrouwbare logistieke bedrijven en expediteurs in Europa (België, Nederland, Duitsland, Frankrijk, Polen, Litouwen, …) die op lange termijn met vaste onderaannemers/charters werken en kleine vervoerders aannemen (bv. zoals DSV, Ewals Cargo Care, Girteka, Raben, Kuehne+Nagel, Jan de Rijk, H.Essers — maar zoek ook minder bekende, liefst met routes vanuit of naar de Benelux). Sla deze namen over: ${known.slice(0, 80).join(", ") || "(geen)"}.
+Betrouwbaar betekent: lang actief, groot, bekende naam, certificaten (bv. ISO, TAPA, SQAS), goede betaalreputatie of vaste betaaltermijnen, een officieel programma om als vervoerder/subcontractor aan te sluiten.
+Geef per bedrijf: naam, land, plaats (hoofdkantoor of vestiging die vervoerders zoekt), telefoon, e-mail (carrier/subcontracting/aankoop transport), website, "aanmelden": de link naar hun pagina of formulier om je als vervoerder/charter aan te melden (als je die vond), "betrouwbaarheid": één zin met de concrete reden, en "waarom": één zin waarom het bij ons past (routes, type vracht, vaste ritten).
+JSON: {"bedrijven":[{"naam":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}]}` });
+      const list = ((r.data && r.data.bedrijven) || []).filter(x => x && x.naam).slice(0, 8).map(x => ({ ...x, plaats: [x.plaats, x.land].filter(Boolean).join(", "), sector: "logistiek / onderaanneming" }));
+      const saved = saveKansen(list, "partner", { bronnen: r.sources.slice(0, 10) });
+      for (const k of saved) { const src = list.find(x => x.naam === k.naam) || {}; store.patch("kansen", k.id, { aanmelden: src.aanmelden || "", betrouwbaarheid: src.betrouwbaarheid || "", land: src.land || "" }); }
+      store.setting("jarvisPartnersGezocht", new Date().toISOString());
+      log("kansen", saved.length ? `Ik vond ${saved.length} betrouwbare bedrijven die met vaste onderaannemers werken: ${kList(saved)}. Je vindt ze onder Kansen → Vaste opdrachtgevers.` : "Ik vond deze week geen nieuwe vaste opdrachtgevers.", { actie: { type: "kansen" } });
+      if (saved.length) emitOffice({ type: "kansen" });
+      return { gevonden: saved.length };
+    } finally { searching.delete("partners"); }
+  }
+  // Lege terugrit: vrachtwagen lost ver van huis en heeft daarna nog niets.
+  let homePos = null;
+  async function retourCheck() {
+    if (!homePos) homePos = await placeOf(String(bedrijf().adres || "").replace(/\n/g, ", ")); if (!homePos) return;
+    const O = store.all("orders");
+    for (const o of O.filter(o => o.chauffeurId && [...ACTIVE, "Gepland"].includes(o.status))) {
+      const w = await win(o); if (!w.U || w.a - Date.now() > 3 * 864e5) continue;
+      const afstand = km(homePos, w.U); if (afstand < 250) continue;
+      let next = false; for (const x of O.filter(x => x.id !== o.id && x.chauffeurId === o.chauffeurId && LIVE.includes(x.status))) { const wx = await win(x); if (wx.a >= w.b - 3600e3 && wx.a - w.b < 36 * 3600e3) { next = true; break; } }
+      if (next) { closeKey("retour-" + o.id); continue; }
+      ask("retour-" + o.id, `🔁 ${driverName(o.chauffeurId)} lost ${fdt(o.losdatum || o.laaddatum)} in ${o.losplaats}, ${Math.round(afstand * 1.2)} km van huis, en heeft daarna nog geen rit. Zal ik retourvracht zoeken richting België?`, { type: "retour", id: o.id, label: "Zoek retourvracht" });
+    }
+  }
+  async function zoekRetour(o) {
+    if (!ai.configured()) throw Object.assign(new Error("AI is niet gekoppeld"), { status: 409 });
+    act(`Ik zoek retourvracht vanuit ${o.losplaats}…`, { col: "orders", id: o.id });
+    const thuis = String(bedrijf().adres || "België").replace(/\n/g, ", ");
+    const bestaande = store.all("customers").map(c => c.naam).slice(0, 40).join(", ");
+    const r = await ai.research({ system: SYS_ZOEK, maxUses: 6, prompt: `Onze vrachtwagen (trekker + oplegger 13,6 m) staat leeg in ${o.losplaats} vanaf ${fdt(o.losdatum || o.laaddatum)} en moet terug naar ${thuis}.
+Zoek 4 tot 6 bedrijven in of rond ${o.losplaats} (verladers, productie, distributiecentra, of expediteurs die retourladingen naar België/Benelux uitbesteden) die we kunnen contacteren voor een retourvracht. Vermeld ook als een van onze klanten (${bestaande || "geen"}) daar actief is.
+JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"","website":"","waarom":""}]}` });
+    const saved = saveKansen(((r.data && r.data.bedrijven) || []).filter(x => x && x.naam).slice(0, 6), "retour", { voorRit: o.id, rit: `${o.ref}: leeg in ${o.losplaats}`, bronnen: r.sources.slice(0, 8) });
+    log("kansen", saved.length ? `Retourvracht vanuit ${o.losplaats}: ${saved.length} bedrijven om te contacteren: ${kList(saved)}.` : `Ik vond geen retourvracht-kansen rond ${o.losplaats}.`, { ref: { col: "orders", id: o.id }, actie: { type: "kansen" } });
+    return saved.length;
   }
 
   // ---------- 6. update om de x uur ----------
@@ -424,6 +524,13 @@ module.exports = function createJarvis(x) {
       await step("planning", planning);
       if (c.waakhond) await step("waakhond", waakhond);
       await step("vervaldatums", async () => vervaldatums());
+      if (c.kansen !== false) {
+        await step("retourvracht", retourCheck);
+        const n = nowParts(), lastK = store.setting("jarvisKlantenGezocht");
+        if (n.wd === "Mon" && n.h >= 9 && workTime() && (!lastK || Date.now() - new Date(lastK).getTime() > 6 * 864e5)) step("klanten zoeken", () => zoekKlanten(false));
+        const lastP = store.setting("jarvisPartnersGezocht");
+        if (n.wd === "Wed" && n.h >= 9 && workTime() && (!lastP || Date.now() - new Date(lastP).getTime() > 6 * 864e5)) step("vaste opdrachtgevers zoeken", () => zoekPartners());
+      }
       if (c.invoice) await step("facturen", invoices);
       if (c.reminders && workTime() && Date.now() - (lastRun.rem || 0) > 3600e3) { lastRun.rem = Date.now(); await step("herinneringen", reminders); }
       await step("opruimen", async () => opruimen());
@@ -454,6 +561,7 @@ module.exports = function createJarvis(x) {
       assign(o, { driverId: j.actie.driverId, vehicleId: j.actie.vehicleId }, "goedgekeurd door " + (user.name || user.email));
       log("toewijzing", `Rit ${o.ref} gegeven aan ${driverName(j.actie.driverId)} (goedgekeurd door ${user.name || user.email}).`, { ref: { col: "orders", id: o.id } });
     }
+    if (action === "doe" && j.actie && j.actie.type === "retour") { const o = store.get("orders", j.actie.id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekRetour(o); }
     if (action === "doe" && j.actie && j.actie.type === "cancel") {
       const o = store.get("orders", j.actie.id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 });
       const upd = store.patch("orders", o.id, { status: "Geannuleerd", geannuleerd: { at: new Date().toISOString(), door: user.name || user.email } }); emit("orders", o.id, upd, o);
@@ -488,6 +596,12 @@ module.exports = function createJarvis(x) {
       { name: "factuur_betaald", description: "Zet een factuur op betaald (bv. als de gebruiker zegt dat het geld binnen is).", inputSchema: { type: "object", properties: { nr: { type: "string" } }, required: ["nr"] },
         execute: async a => { const i = store.all("invoices").find(i => String(i.nr).toLowerCase() === String(a.nr).trim().toLowerCase()); if (!i) return { fout: "factuur niet gevonden" };
           const d = store.patch("invoices", i.id, { status: "Betaald", betaaldOp: todayLocal() }); emit("invoices", i.id, d, i); log("factuur", `Factuur ${i.nr} op betaald gezet (door ${who}).`, { ref: { col: "invoices", id: i.id } }); return { ok: true }; } },
+      { name: "zoek_vaste_opdrachtgevers", description: "Zoekt op het internet betrouwbare logistieke bedrijven in Europa die op lange termijn met onderaannemers (vervoerders zoals wij) werken, met contact en aanmeldlink. Bewaart ze onder Kansen. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
+        execute: async () => { await zoekPartners(); return { kansen: store.all("kansen").filter(k => k.soort === "partner" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden, betrouwbaarheid: k.betrouwbaarheid })) }; } },
+      { name: "zoek_nieuwe_klanten", description: "Zoekt op het internet bedrijven die een goede nieuwe klant kunnen zijn en bewaart ze onder Kansen. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
+        execute: async () => { await zoekKlanten(true); return { kansen: store.all("kansen").filter(k => k.soort === "klant" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, plaats: k.plaats, sector: k.sector, telefoon: k.telefoon, waarom: k.waarom })) }; } },
+      { name: "kansen", description: "Lijst van gevonden kansen: mogelijke klanten (verladers), vaste opdrachtgevers die met onderaannemers werken, en retourvracht, met contactgegevens en status.", inputSchema: { type: "object", properties: { soort: { type: "string", description: "klant, partner of retour" } } },
+        execute: async a => store.all("kansen").filter(k => !a.soort || k.soort === a.soort).slice(-20).map(k => ({ soort: k.soort, naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden || "", betrouwbaarheid: k.betrouwbaarheid || "", status: k.status, rit: k.rit || "", waarom: k.waarom })) },
       { name: "jarvis_status", description: "Wat Jarvis de laatste uren deed en welke vragen nog openstaan.", inputSchema: { type: "object", properties: {} },
         execute: async () => { const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at)); return { modus: cfg().aan ? (cfg().proef ? "proefmodus" : "automatisch") : "uit", openVragen: all.filter(j => j.open && !j.klaar).map(j => j.tekst), recent: all.filter(j => !j.open && j.soort !== "update").slice(0, 15).map(j => j.at.slice(0, 16) + " " + j.tekst) }; } },
     ];
@@ -495,5 +609,5 @@ module.exports = function createJarvis(x) {
 
   const timer = setInterval(() => tick("timer"), 3 * 60 * 1000);
   setTimeout(() => tick("start"), 20000);
-  return { tick, onNewMail, update, resolve, offer, catchup, cfg, tools, DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
+  return { tick, onNewMail, update, resolve, offer, catchup, zoekKlanten, zoekPartners, zoekOnderaannemers: async id => { const o = store.get("orders", id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekOnderaannemers(o, "Op jouw vraag."); }, cfg, tools, note: (t, fout) => log(fout ? "fout" : "telefoon", t), DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
 };
