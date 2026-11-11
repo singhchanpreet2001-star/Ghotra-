@@ -256,7 +256,7 @@ function vPlanning(){const c=S.cal;
    <span style="flex:1"></span><button class="navbtn" data-act="calnav" data-v="-1" aria-label="Vorige">‹</button><span class="period">${esc(period)}</span><button class="navbtn" data-act="calnav" data-v="1" aria-label="Volgende">›</button><button class="btn sm" data-act="caltoday">Vandaag</button></div>
   ${conf.length?`<div class="notice err"><b>${conf.length} ${conf.length===1?"rit heeft":"ritten hebben"} een afwezige chauffeur</b>${conf.slice(0,4).map(x=>`<span>${esc(x.o.ref)} · ${esc((byId("drivers",x.o.chauffeurId)||{}).naam||"")} is ${esc(abLabel(x.a).toLowerCase())}</span>`).join("")}<div><button class="btn sm" data-act="conflicts">Ritten herverdelen</button></div></div>`:""}
   ${c.mode==="maand"?monthRoster(c.y,c.m):yearView(c.y)}
-  <div class="legend"><span><i style="background:var(--bad)"></i>Ziek</span><span><i style="background:var(--warn)"></i>Verlof</span><span><i style="background:var(--vio)"></i>Opleiding</span><span><i style="background:var(--plan)"></i>Andere</span><span><i style="background:var(--accent);height:5px"></i>Rit gepland</span><span><i style="background:none;box-shadow:inset 0 -2px 0 var(--warn)"></i>Feestdag</span></div>
+  <div class="legend"><span><i style="background:var(--bad)"></i>Ziek</span><span><i style="background:var(--warn)"></i>Verlof</span><span><i style="background:var(--vio)"></i>Opleiding</span><span><i style="background:var(--plan)"></i>Andere</span><span><i style="background:var(--accent);height:5px"></i>Rit gepland of bezig (verdwijnt na Gelost)</span><span><i style="background:none;box-shadow:inset 0 -2px 0 var(--warn)"></i>Feestdag</span></div>
   <section class="sec"><div class="sec-h"><h2>Afwezigheden</h2><button class="btn sm primary" data-act="newabs">Ziekte of verlof ingeven</button></div>
    <div class="list">${up.length?up.map(a=>{const d=byId("drivers",a.chauffeurId);return `<button class="row" data-act="edit-absences" data-id="${a.id}"><span class="grow"><span class="t1">${esc(d?d.naam:"Onbekende chauffeur")}</span><span class="t2">${a.tot?fdate(a.van)+" – "+fdate(a.tot):"vanaf "+fdate(a.van)+" · tot nader bericht"}${a.notitie?" · "+esc(a.notitie):""}</span></span><span class="pill ${sCls(a.type)}">${esc(a.type)}</span></button>`}).join(""):`<div class="empty">Geen lopende of geplande afwezigheden. Tik op een vakje in de kalender of op de knop hierboven om ziekte of verlof in te geven.</div>`}</div></section>`}
 
@@ -266,8 +266,8 @@ function monthRoster(y,m){const n=new Date(y,m+1,0).getDate(),hol=holidays(y),to
   if(!drivers.length)return `<div class="calbox"><div class="empty">Nog geen chauffeurs. Voeg ze toe onder Beheer → Chauffeurs.<button class="btn sm primary" data-act="new" data-col="drivers">Chauffeur toevoegen</button></div></div>`;
   const cls=d=>[d.we?"we":"",d.hol?"hol":"",d.td?"td":""].join(" ");
   const rows=drivers.map(dr=>`<tr><th class="nm" scope="row" title="${esc(dr.naam)}">${esc(dr.naam)}</th>${days.map(d=>{const a=absOn(dr.id,d.s);
-     const rides=a?0:S.orders.filter(o=>o.chauffeurId===dr.id&&o.status!=="Geannuleerd"&&(()=>{const[f,t]=orderSpan(o);return f<=d.s&&t>=d.s})()).length;
-     const tip=a?`${dr.naam}: ${abLabel(a)}`:rides?`${dr.naam}: ${rides} rit(ten)`:`${dr.naam}: beschikbaar`;
+     const rides=a?0:S.orders.filter(o=>o.chauffeurId===dr.id&&["Gepland",...ACTIVE].includes(o.status)&&(()=>{const[f,t]=orderSpan(o);return f<=d.s&&t>=d.s})()).length;
+     const tip=a?`${dr.naam}: ${abLabel(a)}`:rides?`${dr.naam}: ${rides} lopende rit(ten)`:`${dr.naam}: beschikbaar`;
      return `<td class="${cls(d)}"><button class="cell ${a?abCls(a.type):""}" data-act="calcell" data-id="${dr.id}" data-v="${d.s}" title="${esc(tip+(d.hol?" · "+d.hol:""))}" aria-label="${esc(tip+" op "+fdate(d.s))}">${a?a.type[0]:rides?`<span class="rit ${rides>1?"n2":""}"></span>`:""}</button></td>`}).join("")}</tr>`).join("");
   const foot=days.map(d=>{const free=drivers.filter(dr=>!absOn(dr.id,d.s)).length;return `<td class="${cls(d)} ${free<drivers.length/2?"low":""}">${free}</td>`}).join("");
   return `<div class="calbox"><table class="roster"><thead><tr><th class="nm">Chauffeur</th>${days.map(d=>`<th class="${cls(d)}" ${d.hol?`title="${esc(d.hol)}"`:""}>${d.wd}<b>${d.i}</b></th>`).join("")}</tr></thead>
@@ -809,15 +809,17 @@ function shRoute(sh){const o=byId("orders",sh.id)||{};const t=`Route <span class
    ${r?`<section class="sec"><span class="lbl">Instructies</span><div class="steps">${r.steps.slice(0,80).map(s=>`<div><span>${esc(s.text)}</span><small>${s.length>=1000?(s.length/1000).toFixed(1)+" km":s.length+" m"}</small></div>`).join("")}</div></section>`:""}
    ${gLinks(o)}`)}
 let routeMap=null,truckMarker=null;
-async function drawRoute(){const sh=S.sheet;if(!sh||sh.type!=="route"||sh.state!=="ok"||!sh.data.configured)return;const d=sh.data;
-  try{const L=await leaflet();const el=$("#map");if(!el)return;if(routeMap){routeMap.remove();routeMap=null}
+let routeDraw=0;
+async function drawRoute(){const sh=S.sheet;if(!sh||sh.type!=="route"||sh.state!=="ok"||!sh.data.configured)return;const d=sh.data;const my=++routeDraw;
+  try{const L=await leaflet();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(my!==routeDraw||S.sheet!==sh)return;
+    const el=$("#panel #map");if(!el)return;if(routeMap){try{routeMap.remove()}catch(e){}routeMap=null}truckMarker=null;if(el._leaflet_id)el._leaflet_id=null;
     routeMap=L.map(el,{zoomControl:true,attributionControl:true});
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(routeMap);
     const pts=d.route?d.route.coords:[[d.laad.lat,d.laad.lng],[d.los.lat,d.los.lng]];
     const line=L.polyline(pts,{color:getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()||"#0d9466",weight:5,opacity:.9}).addTo(routeMap);
     L.circleMarker([d.laad.lat,d.laad.lng],{radius:9,color:"#fff",weight:3,fillColor:"#a96608",fillOpacity:1}).addTo(routeMap).bindTooltip("Laden: "+d.laad.label);
     L.circleMarker([d.los.lat,d.los.lng],{radius:9,color:"#fff",weight:3,fillColor:"#c2352f",fillOpacity:1}).addTo(routeMap).bindTooltip("Lossen: "+d.los.label);
-    routeMap.fitBounds(line.getBounds(),{padding:[24,24]});updateTruck()}catch(e){const el=$("#map");if(el)el.outerHTML='<div class="notice">De kaart kon niet laden.</div>'}}
+    const fit=()=>{if(!routeMap)return;routeMap.invalidateSize();routeMap.fitBounds(line.getBounds(),{padding:[24,24]})};fit();setTimeout(fit,250);setTimeout(fit,800);updateTruck()}catch(e){console.error(e);const el=$("#panel #map");if(el)el.outerHTML=`<div class="notice">De kaart kon niet laden. ${esc(e.message||"")}</div>`}}
 function updateTruck(){const sh=S.sheet;if(!routeMap||!sh||sh.type!=="route")return;const o=byId("orders",sh.id);const p=o&&(S.positions||[]).find(x=>x.driverId===o.chauffeurId);if(!p)return;
   const L=window.L;if(truckMarker)truckMarker.setLatLng([p.lat,p.lng]);else truckMarker=L.circleMarker([p.lat,p.lng],{radius:8,color:"#fff",weight:3,fillColor:"#7c4dcc",fillOpacity:1}).addTo(routeMap);
   truckMarker.bindTooltip(((chauffeur(o)||{}).naam||"Chauffeur")+" · "+ago(p.at))}
