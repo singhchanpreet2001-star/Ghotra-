@@ -122,7 +122,7 @@ function render(){
   if(!db&&S.dbState==="off"){v.innerHTML=`<div class="notice err"><b>Server niet bereikbaar</b>Herlaad de pagina.</div>`;return}
   if(S.dbErr){v.innerHTML=`<div class="notice err"><b>Gegevens niet bereikbaar</b>De verbinding met de opslag is verbroken. Herlaad de pagina.</div>`;return}
   const fn={vandaag:vVandaag,ritten:vRitten,planning:vPlanning,mail:vMail,facturen:vFacturen,meer:vMeer,documenten:vDocumenten,kaart:vKaart,facturatie:vFacturatie,gebruikers:vGebruikers,koppelingen:vKoppelingen,klanten:vKlanten,chauffeurs:vChauffeurs,voertuigen:vVoertuigen,bedrijf:vBedrijf}[S.view]||vVandaag;
-  v.innerHTML=(S.slow&&!allLoaded()?`<div class="notice">Gegevens zijn nog niet bereikbaar. Wat je ziet kan onvolledig zijn.</div>`:"")+fn();
+  v.innerHTML=(S.status&&S.status.storageWarning?`<div class="notice err"><b>Let op: gegevens worden niet bewaard</b>${esc(S.status.storageWarning)}<span>Oplossing in Railway: open je service → <b>Settings → Volumes → Add Volume</b> met pad <b>/data</b>, en zet bij <b>Variables</b> DATA_DIR op /data.</span></div>`:"")+(S.slow&&!allLoaded()?`<div class="notice">Gegevens zijn nog niet bereikbaar. Wat je ziet kan onvolledig zijn.</div>`:"")+fn();
   if(S.view==="kaart")drawFleet();else if(fleetMap){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
   if(S.view==="planning"&&S.cal.mode==="maand"){const box=v.querySelector(".calbox"),key=S.cal.y+"-"+S.cal.m;if(box){if(S._rosterKey===key&&S._rosterScroll!=null)box.scrollLeft=S._rosterScroll;else{const td=box.querySelector("thead th.td");box.scrollLeft=td?Math.max(0,td.offsetLeft-box.querySelector(".nm").offsetWidth-60):0;S._rosterKey=key;S._rosterScroll=box.scrollLeft}box.onscroll=()=>{S._rosterScroll=box.scrollLeft}}}
 }
