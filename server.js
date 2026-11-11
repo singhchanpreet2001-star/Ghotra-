@@ -271,7 +271,7 @@ on("GET", "/api/data", (req, res, u) => {
   const out = {}; COLS.forEach(c => out[c] = store.all(c));
   out.bedrijf = bedrijf(); out.facturatie = store.get("config", "facturatie") || {}; delete out.config;
   out.positions = db.prepare("SELECT * FROM positions").all();
-  out.status = { mail: mail.configured(), mailGmail: /gmail\.com$/i.test(mail.config().imapHost), mailUser: mail.config().user, ai: ai.configured(), here: here.configured() };
+  out.status = { storageWarning: store.STORAGE_WARNING || "", mail: mail.configured(), mailGmail: /gmail\.com$/i.test(mail.config().imapHost), mailUser: mail.config().user, ai: ai.configured(), here: here.configured() };
   send(res, 200, out);
 });
 on("PUT", "/api/c/:col/:id", async (req, res, u, p) => {
