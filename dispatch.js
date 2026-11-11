@@ -1175,13 +1175,23 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
 const JICON={prijs:"💶",rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",factuur:"🧾",herinnering:"💶",vraag:"❓",update:"🗒️",fout:"⚠️"};
 async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag"].includes(S.view))render()}
 const jOpen=()=>((S.jarvis||{}).items||[]).filter(j=>j.open&&!j.klaar);
+// waar een regel van Jarvis naartoe leidt: de rit, factuur, mail, klant… waar het over gaat
+function jLink(j){const r=j.ref||{},a=j.actie||{},id=x=>`data-id="${esc(x)}"`;
+  if(r.col==="orders"&&byId("orders",r.id))return `data-act="order" ${id(r.id)}`;
+  if(r.col==="invoices"&&byId("invoices",r.id))return `data-act="jinv" ${id(r.id)}`;
+  if(r.col==="customers"&&byId("customers",r.id))return `data-act="edit-customers" ${id(r.id)}`;
+  if(a.key)return `data-act="jmail" ${id(a.key)}`;
+  if(["order","assign","cancel"].includes(a.type)&&byId("orders",a.id))return `data-act="order" ${id(a.id)}`;
+  if(["invoice","remind","download"].includes(a.type)&&byId("invoices",a.id))return `data-act="jinv" ${id(a.id)}`;
+  if(a.type==="verval")return a.col==="documents"?`data-act="nav" data-v="documenten"`:`data-act="edit-${a.col}" ${id(a.id)}`;
+  return ""}
 function jarvisCard(){const J=S.jarvis;if(!J||J.state!=="ok")return"";const c=J.config||{},open=jOpen(),items=J.items||[],up=items.find(j=>j.soort==="update");
   const recent=items.filter(j=>j.soort!=="update"&&!(j.open&&!j.klaar)).slice(0,8);const more=S.jShowAll?open:open.slice(0,4);
   if(!c.aan)return `<section class="sec"><div class="sec-h"><h2>🤖 Jarvis</h2><button class="btn sm" data-act="nav" data-v="jarvis">Instellen</button></div><div class="notice">Jarvis staat uit. Zet hem aan om mails, planning en facturen te laten opvolgen.</div></section>`;
   return `<section class="sec jvd"><div class="sec-h"><h2>🤖 Jarvis <small class="muted" style="font-weight:500;font-size:12.5px">${c.proef?"proefmodus":"automatisch"}</small></h2><button class="btn sm" data-act="nav" data-v="jarvis">Logboek en instellingen</button></div>
    ${open.length?`<div class="lbl" style="margin:2px 0 6px">Voor jou (${open.length})</div><div class="jlist">${more.map(jItem).join("")}</div>${open.length>4?`<button class="linkbtn" data-act="jall">${S.jShowAll?"Minder tonen":"Toon alle "+open.length+" vragen"}</button>`:""}`:`<div class="notice ok"><b>Niets voor jou</b>Jarvis leest je mail, plant en volgt alles op. Je krijgt hier een update om de ${c.updateUren||2} uur.</div>`}
    <div class="lbl" style="margin:14px 0 6px">Live: wat Jarvis doet</div>
-   <div class="jfeed">${recent.length?recent.map(j=>{const r=j.ref||{},act=r.col==="orders"?`data-act="order" data-id="${r.id}"`:r.col==="invoices"?`data-act="jinv" data-id="${r.id}"`:"";return `<button class="jf ${S._jNew&&S._jNew.has(j.id)?"jnew":""}" ${act||'data-act="nav" data-v="jarvis"'}><span class="jft mono">${new Date(j.at).toLocaleTimeString("nl-BE",{hour:"2-digit",minute:"2-digit"})}</span><span class="ji">${j.klaar?"✅":JICON[j.soort]||"•"}</span><span class="grow">${esc(j.tekst)}</span></button>`}).join(""):'<div class="empty">Nog niets gebeurd vandaag. Zodra er mail binnenkomt of een rit verandert, zie je het hier.</div>'}</div>
+   <div class="jfeed">${recent.length?recent.map(j=>{const act=jLink(j);return `<button class="jf ${S._jNew&&S._jNew.has(j.id)?"jnew":""}" ${act||"disabled"}><span class="jft mono">${new Date(j.at).toLocaleTimeString("nl-BE",{hour:"2-digit",minute:"2-digit"})}</span><span class="ji">${j.klaar?"✅":JICON[j.soort]||"•"}</span><span class="grow">${esc(j.tekst)}</span></button>`}).join(""):'<div class="empty">Nog niets gebeurd vandaag. Zodra er mail binnenkomt of een rit verandert, zie je het hier.</div>'}</div>
    ${up?`<details class="jrecent"><summary>Laatste update (${ftime(up.at)})</summary><div class="jupd" style="margin-top:6px"><div class="jtext">${esc(up.tekst)}</div></div></details>`:""}</section>`}
 function jItem(j){const a=j.actie||{},ref=j.ref||{};
   const VV={drivers:"chauffeurs",vehicles:"voertuigen",documents:"documenten"};

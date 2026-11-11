@@ -342,3 +342,4 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 .jf.jnew{animation:jnew 2.5s ease}
 @keyframes jnew{0%{background:var(--accent-soft);transform:translateY(-4px)}20%{transform:none}100%{background:transparent}}
 @media (prefers-reduced-motion:reduce){.jf.jnew{animation:none;background:var(--accent-soft)}}
+.jf[disabled]{cursor:default;opacity:1}.jf[disabled]:hover{background:none}

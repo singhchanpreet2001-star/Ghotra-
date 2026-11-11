@@ -228,13 +228,14 @@ module.exports = function createJarvis(x) {
       if (r.laadplaats && r.losplaats) {
         const f = a.fileId ? { id: a.fileId } : null, uidN = +String(a.key || "").split("-").pop() || 0;
         const o = makeOrder({ ...r, prijs: bedrag }, findKlant(r, a.to), { m: { from: a.to, subject: a.subject }, item: { uid: uidN }, f, fileName: a.fileName, who: a.fromName || a.to, via: "jouw akkoord op de prijsvraag" });
-        extra = ` Rit ${o.ref} is aangemaakt en wordt ingepland.`;
+        extra = ` Rit ${o.ref} is aangemaakt en wordt ingepland.`; a._orderId = o.id;
         setTimeout(() => tick("offer"), 1500);
       } else extra = " Maak de rit aan zodra de klant de gegevens stuurt.";
     }
     const d = store.patch("jarvis", id, { klaar: new Date().toISOString(), door: who, besluit, bedrag }); emitOffice({ type: "jarvis", item: d });
     if (a.key && store.get("mailinfo", a.key)) { const mi = store.patch("mailinfo", a.key, { dringend: false, afgehandeld: new Date().toISOString(), door: who }); emitOffice({ type: "mailinfo", item: mi }); }
-    log("prijs", besluit === "akkoord" ? `Akkoord ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).${extra}` : besluit === "voorstel" ? `Prijsvoorstel ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).` : `${a.fromName || a.to} gemaild dat we ${a.rit} niet kunnen doen (door ${who}).`);
+    const prijsRef = a._orderId ? { ref: { col: "orders", id: a._orderId } } : { actie: { key: a.key } };
+    log("prijs", besluit === "akkoord" ? `Akkoord ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).${extra}` : besluit === "voorstel" ? `Prijsvoorstel ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).` : `${a.fromName || a.to} gemaild dat we ${a.rit} niet kunnen doen (door ${who}).`, prijsRef);
     return d;
   }
 
