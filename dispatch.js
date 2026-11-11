@@ -60,10 +60,11 @@ const I={
  ritten:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6h13v10H1zM14 10h4l3 3v3h-7z"/><circle cx="5.5" cy="17.5" r="2"/><circle cx="17.5" cy="17.5" r="2"/></svg>',
  mail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>',
  facturen:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h8M9 17h5"/></svg>',
+ kansen:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8 10.5h5M10.5 8v5"/></svg>',
  meer:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c1.9.7 3.1 2.5 3.5 5.2"/></svg>',
  x:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>'
 };
-const NAV=[["vandaag","Vandaag"],["ritten","Ritten"],["planning","Planning"],["mail","Mail"],["facturen","Facturen"],["meer","Beheer"]];
+const NAV=[["vandaag","Vandaag"],["ritten","Ritten"],["planning","Planning"],["mail","Mail"],["facturen","Facturen"],["meer","Beheer"],["kansen","Kansen"]];
 const SUBVIEWS={jarvis:"Jarvis",documenten:"Documenten",klanten:"Klanten",chauffeurs:"Chauffeurs",voertuigen:"Voertuigen",bedrijf:"Bedrijfsgegevens",kaart:"Vloot live",facturatie:"Facturatie",gebruikers:"Logins",koppelingen:"Koppelingen"};
 
 /* ---------- toast ---------- */
@@ -114,14 +115,14 @@ function navHTML(){const unread=S.mail.threads.filter(t=>isUnread(t)).length;
 function render(){
   $("#tabbar").innerHTML=navHTML();
   $("#rail").innerHTML='<span class="logo" aria-hidden="true">G</span>'+navHTML();
-  const titles={vandaag:"Vandaag",ritten:"Ritten",planning:"Planning",mail:"Mail",facturen:"Facturen",meer:"Beheer",...SUBVIEWS};
+  const titles={kansen:"Kansen",vandaag:"Vandaag",ritten:"Ritten",planning:"Planning",mail:"Mail",facturen:"Facturen",meer:"Beheer",...SUBVIEWS};
   $("#title").textContent=titles[S.view]||"";
-  $("#addBtn").hidden=["jarvis","meer","bedrijf","koppelingen","facturatie","kaart"].includes(S.view);
+  $("#addBtn").hidden=["kansen","jarvis","meer","bedrijf","koppelingen","facturatie","kaart"].includes(S.view);
   $("#aiBtn").hidden=!S.me;
   const v=$("#view");
   if(!db&&S.dbState==="off"){v.innerHTML=`<div class="notice err"><b>Server niet bereikbaar</b>Herlaad de pagina.</div>`;return}
   if(S.dbErr){v.innerHTML=`<div class="notice err"><b>Gegevens niet bereikbaar</b>De verbinding met de opslag is verbroken. Herlaad de pagina.</div>`;return}
-  const fn={jarvis:vJarvis,vandaag:vVandaag,ritten:vRitten,planning:vPlanning,mail:vMail,facturen:vFacturen,meer:vMeer,documenten:vDocumenten,kaart:vKaart,facturatie:vFacturatie,gebruikers:vGebruikers,koppelingen:vKoppelingen,klanten:vKlanten,chauffeurs:vChauffeurs,voertuigen:vVoertuigen,bedrijf:vBedrijf}[S.view]||vVandaag;
+  const fn={kansen:()=>kansenSection(true),jarvis:vJarvis,vandaag:vVandaag,ritten:vRitten,planning:vPlanning,mail:vMail,facturen:vFacturen,meer:vMeer,documenten:vDocumenten,kaart:vKaart,facturatie:vFacturatie,gebruikers:vGebruikers,koppelingen:vKoppelingen,klanten:vKlanten,chauffeurs:vChauffeurs,voertuigen:vVoertuigen,bedrijf:vBedrijf}[S.view]||vVandaag;
   v.innerHTML=(S.status&&S.status.storageWarning?`<div class="notice err"><b>Let op: gegevens worden niet bewaard</b>${esc(S.status.storageWarning)}<span>Oplossing in Railway: open je service → <b>Settings → Volumes → Add Volume</b> met pad <b>/data</b>, en zet bij <b>Variables</b> DATA_DIR op /data.</span></div>`:"")+(S.slow&&!allLoaded()?`<div class="notice">Gegevens zijn nog niet bereikbaar. Wat je ziet kan onvolledig zijn.</div>`:"")+fn();
   if(S.view==="kaart")drawFleet();else if(fleetMap){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
   if(S.view==="planning"&&S.cal.mode==="maand"){const box=v.querySelector(".calbox"),key=S.cal.y+"-"+S.cal.m;if(box){if(S._rosterKey===key&&S._rosterScroll!=null)box.scrollLeft=S._rosterScroll;else{const td=box.querySelector("thead th.td");box.scrollLeft=td?Math.max(0,td.offsetLeft-box.querySelector(".nm").offsetWidth-60):0;S._rosterKey=key;S._rosterScroll=box.scrollLeft}box.onscroll=()=>{S._rosterScroll=box.scrollLeft}}}
@@ -1189,7 +1190,7 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
 
 /* ---------- Jarvis (automatische piloot) ---------- */
 const JICON={kansen:"🔎",telefoon:"📞",prijs:"💶",rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",factuur:"🧾",herinnering:"💶",vraag:"❓",update:"🗒️",fout:"⚠️"};
-async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag"].includes(S.view))render()}
+async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag","kansen"].includes(S.view))render()}
 const jOpen=()=>((S.jarvis||{}).items||[]).filter(j=>j.open&&!j.klaar);
 // waar een regel van Jarvis naartoe leidt: de rit, factuur, mail, klant… waar het over gaat
 function jLink(j){const r=j.ref||{},a=j.actie||{},id=x=>`data-id="${esc(x)}"`;
@@ -1242,7 +1243,7 @@ function vJarvis(){const J=S.jarvis;if(!J||J.state!=="ok"){if(!J)loadJarvis();re
    <section class="sec"><div class="sec-h"><h2>Laatste update</h2><span class="actions"><button class="btn sm" data-act="jupdate">Nu een update</button><button class="btn sm" data-act="jrun">Nu laten werken</button><button class="btn sm" data-act="jcatch">Mails van vandaag laten lezen</button></span></div>
     ${ups[0]?`<div class="jupd"><div class="t2 muted">${esc(ups[0].titel||"")} · ${ftime(ups[0].at)}</div><div class="jtext">${esc(ups[0].tekst)}</div></div>`:'<div class="empty">Nog geen update. Je krijgt er een om de '+(c.updateUren||2)+' uur tijdens werkuren.</div>'}</section>
    <section class="sec"><div class="sec-h"><h2>Wat Jarvis deed</h2></div><div class="jlist">${logs.slice(0,60).map(jItem).join("")||'<div class="empty">Nog niets.</div>'}</div></section>
-   ${kansenSection()}
+   <section class="sec"><button class="row" data-act="nav" data-v="kansen" style="width:100%"><span class="grow"><span class="t1">🔎 Kansen</span><span class="t2">Vaste opdrachtgevers, nieuwe klanten en retourvracht staan nu in de linkerkolom onder Beheer.</span></span><span class="muted">›</span></button></section>
    <section class="sec"><label class="jchk"><input type="checkbox" data-act-change="jcur" ${jcurOn()?"checked":""}><span><b>Jarvis-muisje tonen</b><small>Een cursor met tekstballon toont live wat Jarvis doet terwijl de app openstaat (alleen op dit toestel).</small></span></label></section>
    <section class="sec"><h2>Wat mag Jarvis zelf doen?</h2><form class="form" data-form="jarviscfg">
     ${chk("orders","Ritorders uit de mail → rit","Jarvis leest elke nieuwe mail en sorteert ze (ritorder, wijziging, vraag, factuur, reclame…). Dringende mails zie je meteen op Vandaag (en Jarvis belt je als bellen aanstaat). Alleen echte ritorders (PDF of in de mailtekst) worden een rit; andere mails laat hij met rust.")}
@@ -1349,19 +1350,20 @@ ACT.phonetest=async(d,btn)=>{btn.disabled=true;btn.textContent="Bellen…";try{a
 
 /* ---------- kansen: klanten, onderaannemers, retourvracht ---------- */
 const KS={klant:"Mogelijke klant",partner:"Vaste opdrachtgever",onderaannemer:"Vervoerder",retour:"Retourvracht"};
-function kansenSection(){const K=(S.jarvis&&S.jarvis.kansen)||[],f=S.kf||"open";
+function kansenSection(page){const K=(S.jarvis&&S.jarvis.kansen)||[],f=S.kf||"open";
   const list=K.filter(k=>f==="alle"?true:f==="open"?["nieuw","interessant"].includes(k.status):k.soort===f);
   const cnt=t=>K.filter(k=>t==="open"?["nieuw","interessant"].includes(k.status):k.soort===t).length;
-  return `<section class="sec" id="kansen"><div class="sec-h"><h2>🔎 Kansen</h2><span class="actions"><button class="btn sm" data-act="jzoekpartner" ${S.kBusy?"disabled":""}>Zoek vaste opdrachtgevers</button><button class="btn sm" data-act="jzoekklant" ${S.kBusy?"disabled":""}>${S.kBusy?"Zoeken…":"Zoek nieuwe klanten"}</button></span></div>
+  if(!S.jarvis){loadJarvis();return '<div class="busy"><span class="spin"></span>Kansen laden…</div>'}
+  return `<section class="sec" id="kansen"><div class="sec-h"><h2>${page?"Wat Jarvis voor je vond":"🔎 Kansen"}</h2><span class="actions"><button class="btn sm" data-act="jzoekpartner" ${S.kBusy?"disabled":""}>Zoek vaste opdrachtgevers</button><button class="btn sm" data-act="jzoekklant" ${S.kBusy?"disabled":""}>${S.kBusy?"Zoeken…":"Zoek nieuwe klanten"}</button></span></div>
    <div class="muted" style="font-size:13px;margin-bottom:8px">Jarvis zoekt zelf op het internet. Elke woensdag zoekt hij betrouwbare vaste opdrachtgevers in heel Europa die met onderaannemers werken (zoals DSV of Ewals). Elke maandag zoekt hij nieuwe klanten in je regio. Staat een wagen ver weg leeg, dan stelt hij voor om retourvracht te zoeken. Jij beslist wie je contacteert.</div>
    <div class="chips">${[["open","Open"],["partner","Vaste opdrachtgevers"],["klant","Klanten"],["retour","Retourvracht"],["alle","Alles"]].map(([k,l])=>`<button class="chip" data-act="kf" data-v="${k}" aria-pressed="${f===k}">${l} ${cnt(k)||""}</button>`).join("")}</div>
    <div class="kgrid">${list.length?list.slice(0,40).map(k=>`<article class="kcard ${k.status.replace(/\s/g,"")}"><div class="kh"><span class="pill">${esc(KS[k.soort]||k.soort)}</span>${k.status!=="nieuw"?`<span class="muted" style="font-size:12px">${esc(k.status)}</span>`:""}</div>
      <b>${esc(k.naam)}</b><span class="muted">${esc([k.plaats,k.sector].filter(Boolean).join(" · "))}</span>${k.rit?`<span class="t2">Voor ${esc(k.rit)}</span>`:""}${k.waarom?`<p>${esc(k.waarom)}</p>`:""}${k.betrouwbaarheid?`<p class="krel">✅ ${esc(k.betrouwbaarheid)}</p>`:""}
-     <div class="kc">${k.telefoon?`<a class="btn sm primary" href="tel:${esc(k.telefoon.replace(/[^\d+]/g,""))}">📞 ${esc(k.telefoon)}</a>`:""}${k.email?`<a class="btn sm" href="mailto:${esc(k.email)}">✉️ Mail</a>`:""}${k.website?`<a class="btn sm" href="${esc(/^https?:/.test(k.website)?k.website:"https://"+k.website)}" target="_blank" rel="noopener">🌐 Website</a>`:""}${k.aanmelden?`<a class="btn sm primary" href="${esc(/^https?:/.test(k.aanmelden)?k.aanmelden:"https://"+k.aanmelden)}" target="_blank" rel="noopener">📝 Aanmelden als vervoerder</a>`:""}</div>
+     <div class="kc">${k.telefoon?`<a class="btn sm primary" href="tel:${esc(k.telefoon.replace(/[^\d+]/g,""))}">📞 ${esc(k.telefoon)}</a>`:""}${k.email?`<a class="btn sm" href="mailto:${esc(k.email)}">✉️ Mail</a>`:""}${k.website?`<a class="btn sm" href="${esc(/^https?:/.test(k.website)?k.website:"https://"+k.website)}" target="_blank" rel="noopener noreferrer">🌐 Website</a>`:`<a class="btn sm" href="https://www.google.com/search?q=${encodeURIComponent(k.naam+" "+(k.plaats||""))}" target="_blank" rel="noopener noreferrer">🔍 Zoek online</a>`}${k.aanmelden?`<a class="btn sm primary" href="${esc(/^https?:/.test(k.aanmelden)?k.aanmelden:"https://"+k.aanmelden)}" target="_blank" rel="noopener noreferrer">📝 Aanmelden als vervoerder</a>`:k.soort==="partner"?`<a class="btn sm" href="https://www.google.com/search?q=${encodeURIComponent(k.naam+" become a carrier subcontractor")}" target="_blank" rel="noopener noreferrer">📝 Zoek aanmeldpagina</a>`:""}</div>
      <div class="kc">${["gecontacteerd","interessant","niet interessant"].map(st=>`<button class="btn sm ${k.status===st?"primary":""}" data-act="kstat" data-id="${k.id}" data-v="${st}">${st==="gecontacteerd"?"Gecontacteerd":st==="interessant"?"Interessant":"Niet interessant"}</button>`).join("")}</div></article>`).join(""):'<div class="empty">Nog geen kansen. Klik op "Zoek nieuwe klanten" of wacht tot Jarvis iets vindt.</div>'}</div></section>`}
 Object.assign(ACT,{
  kf:d=>{S.kf=d.v;render()},
- jkansen:()=>{if(S.view!=="jarvis"){S.view="jarvis";location.hash="jarvis";render()}setTimeout(()=>{const e=$("#kansen");if(e)e.scrollIntoView({behavior:"smooth",block:"start"})},150)},
+ jkansen:()=>go("kansen"),
  kstat:async d=>{try{await api(`/api/jarvis/kans/${d.id}`,{method:"POST",json:{status:d.v}});await loadJarvis()}catch(e){toast(e.message)}},
  jzoekpartner:async()=>{S.kBusy=true;render();toast("Jarvis zoekt betrouwbare vaste opdrachtgevers in Europa, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{soort:"partner"}});S.kf="partner";toast(r.bezig?"Jarvis is al aan het zoeken":`${r.gevonden||0} vaste opdrachtgevers gevonden`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()},
  jzoekklant:async()=>{S.kBusy=true;render();toast("Jarvis zoekt nieuwe klanten, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{}});toast(r.bezig?"Jarvis is al aan het zoeken":`${r.gevonden||0} nieuwe kansen gevonden`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()}});

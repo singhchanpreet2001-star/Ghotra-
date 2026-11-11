@@ -390,8 +390,30 @@ module.exports = function createJarvis(x) {
       out.push(k);
     }
     if (out.length) emitOffice({ type: "kansen" });
+    setTimeout(() => checkAllLinks(10), 500);
     return out;
   }
+  // Websites controleren: bestaat het adres echt? Anders een adres uit de bronnen, of later een zoeklink.
+  const fixUrl = u => { u = String(u || "").trim().replace(/^[<(\["']+|[>)\]"',.;]+$/g, "").split(/\s+/)[0]; if (!u) return ""; if (!/^https?:\/\//i.test(u)) u = "https://" + u.replace(/^\/+/, ""); try { const x = new URL(u); return x.protocol.startsWith("http") && x.hostname.includes(".") ? x.href : ""; } catch { return ""; } };
+  async function reachable(u) {
+    if (!u) return false;
+    try { const r = await fetch(u, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(8000), headers: { "user-agent": "Mozilla/5.0 (Ghotra Jarvis linkcheck)", accept: "text/html" } }); try { r.body && r.body.cancel && r.body.cancel(); } catch {} return r.status < 500; }
+    catch { return false; }
+  }
+  async function checkLinks(k) {
+    const host = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+    const srcs = (k.bronnen || []).map(b => b.url).filter(Boolean), words = String(k.naam || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3 && !/transport|logistic|logistics|group|cargo|gmbh|bvba/.test(w));
+    const out = {};
+    for (const f of ["website", "aanmelden"]) {
+      let u = fixUrl(k[f]);
+      if (u && !(await reachable(u))) { const w = u.replace("://", "://www."); u = !/\/\/www\./.test(u) && await reachable(w) ? w : ""; }
+      if (!u && f === "website") { const m = srcs.find(s => words.some(w => host(s).includes(w))); if (m && await reachable(m)) u = "https://" + new URL(m).hostname + "/"; }
+      out[f] = u; out[f + "Ok"] = !!u;
+    }
+    const d = store.patch("kansen", k.id, { website: out.website || "", aanmelden: out.aanmelden || "", webOk: out.websiteOk, linksGecontroleerd: new Date().toISOString() });
+    emitOffice({ type: "kansen" }); return d;
+  }
+  async function checkAllLinks(max = 6) { for (const k of store.all("kansen").filter(k => !k.linksGecontroleerd).slice(0, max)) { try { await checkLinks(k); } catch {} } }
   const kList = l => l.slice(0, 4).map(b => b.naam + (b.plaats ? " (" + b.plaats + ")" : "") + (b.telefoon ? " " + b.telefoon : "")).join(", ");
   const SYS_ZOEK = "Je bent een ervaren dispatcher en zakenontwikkelaar voor een Belgisch transportbedrijf (trekker met oplegger, internationaal Benelux/Frankrijk/Duitsland). Je zoekt op het internet naar echte bedrijven met hun contactgegevens. Verzin nooit bedrijven, telefoonnummers of e-mailadressen: laat een veld leeg als je het niet vond. Antwoord aan het einde met alleen het gevraagde JSON-blok.";
   async function zoekOnderaannemers(o, reden) {
@@ -526,6 +548,7 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
       await step("vervaldatums", async () => vervaldatums());
       if (c.kansen !== false) {
         await step("retourvracht", retourCheck);
+        await step("links controleren", () => checkAllLinks(4));
         const n = nowParts(), lastK = store.setting("jarvisKlantenGezocht");
         if (n.wd === "Mon" && n.h >= 9 && workTime() && (!lastK || Date.now() - new Date(lastK).getTime() > 6 * 864e5)) step("klanten zoeken", () => zoekKlanten(false));
         const lastP = store.setting("jarvisPartnersGezocht");
