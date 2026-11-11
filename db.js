@@ -4,7 +4,16 @@ const { DatabaseSync } = require("node:sqlite");
 const path = require("path");
 const fs = require("fs");
 
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, "..", "data"));
+// Bewaarplaats: DATA_DIR, anders de Railway-schijf (volume), anders een map naast de app (niet blijvend op Railway).
+const DATA_DIR = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(path.basename(__dirname) === "lib" ? path.dirname(__dirname) : __dirname, "data"));
+const ON_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const VOLUME = process.env.RAILWAY_VOLUME_MOUNT_PATH ? path.resolve(process.env.RAILWAY_VOLUME_MOUNT_PATH) : "";
+// Waarschuwing als de gegevens op Railway niet op de vaste schijf staan (dan wist elke update alles).
+const STORAGE_WARNING = ON_RAILWAY && (!VOLUME || !(DATA_DIR === VOLUME || DATA_DIR.startsWith(VOLUME + path.sep)))
+  ? (!VOLUME ? "Er is geen vaste schijf (volume) gekoppeld in Railway. Bij elke update gaan alle gegevens verloren."
+             : `De gegevens staan in ${DATA_DIR}, maar de vaste schijf staat op ${VOLUME}. Zet DATA_DIR op ${VOLUME} of verwijder DATA_DIR.`)
+  : "";
+if (STORAGE_WARNING) console.warn("LET OP:", STORAGE_WARNING);
 const FILE_DIR = path.join(DATA_DIR, "files");
 fs.mkdirSync(FILE_DIR, { recursive: true });
 
@@ -59,4 +68,4 @@ function setting(k, v) {
   return v;
 }
 
-module.exports = { db, DATA_DIR, FILE_DIR, COLS, uid, all, get, put, patch, del, deepMerge, setting };
+module.exports = { db, DATA_DIR, STORAGE_WARNING, FILE_DIR, COLS, uid, all, get, put, patch, del, deepMerge, setting };
