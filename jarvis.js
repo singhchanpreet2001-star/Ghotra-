@@ -2,7 +2,7 @@
 // Jarvis: de automatische piloot. Draait op de server, ook als niemand de app open heeft.
 // Doet zelf wat in Beheer → Jarvis aan staat, en legt de rest als vraag (met één klik) aan kantoor voor.
 
-const DEFAULTS = { aan: false, proef: true, orders: true, bevestiging: true, waakhond: true, assign: true, invoice: true, reminders: true, updateUren: 2, van: 7, tot: 19, weekend: false, herinneringNa: 3, herinneringOm: 14, maxHerinneringen: 3 };
+const DEFAULTS = { aan: false, proef: true, orders: true, waakhond: true, assign: true, invoice: true, reminders: true, updateUren: 2, van: 7, tot: 19, weekend: false, herinneringNa: 3, herinneringOm: 14, maxHerinneringen: 3 };
 const LIVE = ["Gepland", "Naar laadplaats", "Laden", "Naar losplaats", "Lossen"];
 const ACTIVE = LIVE.slice(1);
 
@@ -17,10 +17,13 @@ module.exports = function createJarvis(x) {
   const driverName = id => (store.get("drivers", id) || {}).naam || "?";
   const hasLogin = did => !!db.prepare("SELECT 1 FROM users WHERE role='driver' AND active=1 AND driverId=?").get(did);
 
+  // ---------- wat Jarvis nu doet (voor het muisje in de app) ----------
+  function act(text, target = {}, quiet = false) { try { emitOffice({ type: "jact", text, target, quiet, at: new Date().toISOString() }); } catch {} }
   // ---------- logboek ----------
   function log(soort, tekst, extra = {}) {
     const id = uid(), item = { at: new Date().toISOString(), soort, tekst, ...extra };
     store.put("jarvis", id, item); emitOffice({ type: "jarvis", item: { ...item, id } });
+    if (soort !== "update") act(tekst, extra.open ? { view: "jarvis", id } : extra.ref ? { col: extra.ref.col, id: extra.ref.id } : { view: "jarvis" });
     if (extra.open && (workTime() || /^🔴/.test(tekst) || extra.altijd)) push.notifyRole(["admin", "dispatch"], { title: /^🔴/.test(tekst) ? "🔴 Dringende mail" : "Jarvis vraagt je iets", body: tekst.replace(/^🔴\s*/, "").slice(0, 180), url: "/dispatch#jarvis" });
     return id;
   }
@@ -113,8 +116,7 @@ module.exports = function createJarvis(x) {
   const q = () => store.setting("jarvisMailQ") || [];
   function onNewMail(items) {
     if (!cfg().aan) return;
-    const me = String(mail.config().user || "").toLowerCase();
-    const add = items.filter(m => m.from !== me).map(m => ({ uid: m.uid, from: m.from, fromName: m.fromName || "", subject: m.subject || "", date: m.date || new Date().toISOString(), hasAtt: !!m.hasAtt }));
+    const add = items.filter(m => !/notify\.railway|no-?reply@accounts\.google|mailer-daemon/i.test(m.from || "")).map(m => ({ uid: m.uid, from: m.from, fromName: m.fromName || "", subject: m.subject || "", date: m.date || new Date().toISOString(), hasAtt: !!m.hasAtt }));
     if (add.length) { store.setting("jarvisMailQ", [...q(), ...add].slice(-100)); setTimeout(() => tick("mail"), 2000); }
   }
   function findKlant(r, senderEmail) {
@@ -133,16 +135,31 @@ module.exports = function createJarvis(x) {
     const k = findKlant({}, m.from); const open = k ? O.filter(o => o.klantId === k.id && LIVE.includes(o.status)) : [];
     return open.length === 1 ? open[0] : null;
   }
+  function makeOrder(r, k0, { m, item, f, fileName, who, via }) {
+    let k = k0;
+    if (!k && r.klantNaam) { const kid = uid(); k = store.put("customers", kid, { naam: r.klantNaam, email: r.klantEmail || m.from || "", btw: r.klantBtw || "", adres: r.klantAdres || "", termijn: 30, jarvis: true }); emit("customers", kid, k, null); log("klant", `Nieuwe klant aangemaakt: ${k.naam}.`, { ref: { col: "customers", id: kid } }); }
+    const id = uid();
+    const o = store.put("orders", id, { ref: nextRef(), status: "Gepland", klantId: k ? k.id : "", laadplaats: r.laadplaats || "", laadadres: r.laadadres || "", laaddatum: String(r.laaddatum || "").slice(0, 16), losplaats: r.losplaats || "", losadres: r.losadres || "", losdatum: String(r.losdatum || "").slice(0, 16),
+      goederen: r.goederen || "", colli: r.colli ?? "", gewicht: r.gewicht ?? "", adr: r.adr ? "ja" : "", prijs: r.prijs ?? "", wachtTarief: r.wachtTarief ?? "", vrijeUren: r.vrijeUren ?? "", referentieKlant: r.referentieKlant || "", notities: r.notities || "",
+      ...(f ? { opdrachtPdf: { id: f.id, name: fileName } } : {}), bron: m.subject || fileName || "mail", from: m.from, aangemaakt: new Date().toISOString(), jarvis: { uitMail: true, mail: "inbox-" + item.uid } });
+    emit("orders", id, o, null);
+    const ml = store.put("maillog", uid(), { threadId: "inbox-" + item.uid, orderId: id, subject: m.subject || "", to: "", date: new Date().toISOString(), kind: "in", from: m.from }); emit("maillog", ml.id, ml, null);
+    log("rit", `Nieuwe rit ${o.ref} uit ${via} van ${who}: ${o.laadplaats} → ${o.losplaats}, laden ${fdt(o.laaddatum)}${o.prijs !== "" && o.prijs != null ? ", " + eurS(o.prijs) : ""}.`, { ref: { col: "orders", id } });
+    return o;
+  }
   const mailAct = uidN => ({ type: "mail", key: "inbox-" + uidN, label: "Mail openen" });
   async function processMail(item) {
     const seen = store.setting("jarvisSeen") || [];
     if (seen.includes(item.uid)) return;
     store.setting("jarvisSeen", [...seen, item.uid].slice(-1000));
+    act(`Ik open een nieuwe mail van ${item.fromName || item.from}…`, { view: "mail", key: "inbox-" + item.uid });
     const c = cfg(), m = await mail.getMessage("inbox", item.uid), who = m.fromName || m.from;
+    act(`Ik lees de mail van ${who}: "${m.subject || "(geen onderwerp)"}"`, { view: "mail", key: "inbox-" + item.uid });
     // 1. sorteren: wat is het en is het dringend?
     const t = await ai.triageMail({ from: m.from, fromName: m.fromName, subject: m.subject, text: m.text, attachments: m.attachments.map(a => a.name), company: bedrijf().naam || "Ghotra Transport", today: todayLocal(), klanten: store.all("customers").map(k => k.naam) });
     const info = store.put("mailinfo", "inbox-" + item.uid, { uid: item.uid, box: "inbox", from: m.from, fromName: m.fromName || "", subject: m.subject || "", date: m.date || item.date, hasAtt: m.attachments.length > 0, ...t, at: new Date().toISOString() });
     emitOffice({ type: "mailinfo", item: { ...info, id: "inbox-" + item.uid } });
+    act(`Gesorteerd: ${({ ritorder: "ritorder", ritwijziging: "ritwijziging", prijsvraag: "prijsvraag", vraag: "vraag", factuur: "factuur", administratie: "administratie", reclame: "reclame" })[t.soort] || "overig"}${t.dringend ? " · DRINGEND" : ""}${t.soort === "ritorder" ? ". Ik maak de rit aan…" : t.soort === "prijsvraag" ? ". Ik zoek vorige prijzen en de afstand op…" : t.soort === "reclame" ? ". Laat ik liggen." : ""}`, { view: "mail", key: "inbox-" + item.uid });
     if (t.soort === "ritwijziging") {
       const o = findOrderFor(t, m);
       const wat = o ? `rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}${o.chauffeurId ? ", " + driverName(o.chauffeurId) : ""})` : "een rit" + (t.ref ? " (" + t.ref + ")" : "");
@@ -150,6 +167,7 @@ module.exports = function createJarvis(x) {
       if (o && t.annulering && LIVE.includes(o.status)) ask("mail-" + item.uid, tekst, { type: "cancel", id: o.id, key: "inbox-" + item.uid, label: "Annuleer rit " + o.ref });
       else ask("mail-" + item.uid, tekst + (o ? " Pas de rit aan in de app." : ""), o ? { type: "order", id: o.id, key: "inbox-" + item.uid } : mailAct(item.uid));
     } else if (t.dringend) ask("mail-" + item.uid, `🔴 Dringende mail van ${who}: ${t.samenvatting || m.subject}${t.reden ? " (" + t.reden + ")" : ""}`, mailAct(item.uid));
+    if (t.soort === "prijsvraag") return prijsvraag(m, item, who);
     if (t.soort !== "ritorder" || !c.orders) return;
     // 2. ritorder → rit(ten) maken, uit de PDF of anders uit de mailtekst
     const pdfs = m.attachments.filter(a => /pdf/i.test(a.type) || /\.pdf$/i.test(a.name)).slice(0, 3);
@@ -167,25 +185,58 @@ module.exports = function createJarvis(x) {
       if (r.referentieKlant && store.all("orders").some(o => o.referentieKlant === r.referentieKlant && (!k0 || o.klantId === k0.id))) { log("rit", `Order ${r.referentieKlant} van ${who} bestond al; ik heb geen dubbele rit gemaakt.`); continue; }
       const missing = [["laadplaats", "laadplaats"], ["laaddatum", "laaddatum"], ["losplaats", "losplaats"]].filter(([k]) => !r[k]).map(x => x[1]);
       if (missing.length) { ask("mail-" + item.uid + "-" + (a ? a.idx : 0), `In ${label} van ${who} ontbreekt: ${missing.join(", ")}. Open de mail en maak de rit zelf aan.`, mailAct(item.uid)); continue; }
-      let k = k0;
-      if (!k && r.klantNaam) { const kid = uid(); k = store.put("customers", kid, { naam: r.klantNaam, email: r.klantEmail || m.from || "", btw: r.klantBtw || "", adres: r.klantAdres || "", termijn: 30, jarvis: true }); emit("customers", kid, k, null); log("klant", `Nieuwe klant aangemaakt: ${k.naam}.`, { ref: { col: "customers", id: kid } }); }
-      const id = uid();
-      const o = store.put("orders", id, { ref: nextRef(), status: "Gepland", klantId: k ? k.id : "", laadplaats: r.laadplaats || "", laadadres: r.laadadres || "", laaddatum: String(r.laaddatum || "").slice(0, 16), losplaats: r.losplaats || "", losadres: r.losadres || "", losdatum: String(r.losdatum || "").slice(0, 16),
-        goederen: r.goederen || "", colli: r.colli ?? "", gewicht: r.gewicht ?? "", adr: r.adr ? "ja" : "", prijs: r.prijs ?? "", wachtTarief: r.wachtTarief ?? "", vrijeUren: r.vrijeUren ?? "", referentieKlant: r.referentieKlant || "", notities: r.notities || "",
-        ...(f ? { opdrachtPdf: { id: f.id, name: att.name } } : {}), bron: m.subject || (a ? a.name : "mail"), from: m.from, aangemaakt: new Date().toISOString(), jarvis: { uitMail: true, mail: "inbox-" + item.uid } });
-      emit("orders", id, o, null); made++;
-      const ml = store.put("maillog", uid(), { threadId: "inbox-" + item.uid, orderId: id, subject: m.subject || "", to: "", date: new Date().toISOString(), kind: "in", from: m.from }); emit("maillog", ml.id, ml, null);
-      log("rit", `Nieuwe rit ${o.ref} uit ${a ? "de PDF" : "de mail"} van ${who}: ${o.laadplaats} → ${o.losplaats}, laden ${fdt(o.laaddatum)}${o.prijs !== "" ? ", " + eurS(o.prijs) : ""}.`, { ref: { col: "orders", id } });
+      const o = makeOrder(r, k0, { m, item, f, fileName: att && att.name, who, via: a ? "de PDF" : "de mail" }), id = o.id; made++;
       if (o.prijs === "" || o.prijs == null) ask("prijs-" + id, `Rit ${o.ref} (${o.laadplaats} → ${o.losplaats}) heeft geen prijs in de order. Vul de prijs in, anders kan ik niet factureren.`, { type: "order", id });
     }
-    if (made && c.bevestiging && !c.proef && mail.configured()) {
-      const mine = store.all("orders").filter(o => o.jarvis && o.jarvis.mail === "inbox-" + item.uid), b = bedrijf();
-      const lines = mine.map(o => `• ${o.referentieKlant ? "Uw ref. " + o.referentieKlant + " – " : ""}onze ref. ${o.ref}: laden ${o.laadplaats} ${fdt(o.laaddatum)}, lossen ${o.losplaats}${o.losdatum ? " " + fdt(o.losdatum) : ""}${o.prijs !== "" && o.prijs != null ? ", " + eurS(o.prijs) + " excl. btw" : ""}`).join("\n");
-      const body = `Goedendag,\n\nBedankt voor uw opdracht. Wij bevestigen:\n\n${lines}\n\nWij laten het weten zodra de zending geleverd is.\n\nMet vriendelijke groeten,\n${b.naam || "Ghotra Transport"}${b.tel ? "\n" + b.tel : ""}`;
-      try { await mail.send({ to: [m.from], cc: [], subject: /^re:/i.test(m.subject || "") ? m.subject : "Re: " + (m.subject || "Uw opdracht"), text: body, attachments: [], inReplyTo: m.messageId || "", references: ((m.references || "") + " " + (m.messageId || "")).trim() }); log("rit", `Bevestiging gestuurd naar ${who} voor ${mine.map(o => o.ref).join(", ")}.`); }
-      catch (e) { log("fout", `Bevestiging naar ${who} versturen lukte niet: ${e.message}`); }
-    }
     if (made) { const p = store.get("mailinfo", "inbox-" + item.uid); const d = store.patch("mailinfo", "inbox-" + item.uid, { ritten: made }); emitOffice({ type: "mailinfo", item: d }); }
+  }
+
+  // ---------- prijsvraag: klant vraagt onze prijs of stelt een prijs voor → jij beslist ----------
+  const city = s => String(s || "").split(",")[0].trim().toLowerCase();
+  async function prijsvraag(m, item, who) {
+    const pdfA = m.attachments.find(a => /pdf/i.test(a.type) || /\.pdf$/i.test(a.name));
+    let att = null, f = null, r = {};
+    if (pdfA) { att = await mail.getAttachment("inbox", item.uid, pdfA.idx); f = saveFile(att.bytes, att.name, "application/pdf", "jarvis"); }
+    try { r = await ai.orderFromFile({ buf: att ? att.bytes : null, type: "application/pdf", name: att ? att.name : "mailtekst", company: bedrijf().naam || "Ghotra Transport", today: todayLocal(), sender: (m.fromName || "") + " <" + m.from + ">", subject: m.subject, body: m.text }); } catch { r = {}; }
+    const bod = +r.prijs > 0 ? +r.prijs : null;
+    // doorgestuurd vanuit je eigen mailbox? dan is de klant wie in de mail/PDF staat
+    const own = String(m.from || "").toLowerCase() === String(mail.config().user || "").toLowerCase();
+    if (own) { who = r.klantNaam || who; }
+    const replyTo = own ? (r.klantEmail || "") : m.from;
+    // wat reden we vroeger op deze route?
+    const same = store.all("orders").filter(o => +o.prijs > 0 && o.status !== "Geannuleerd" && city(o.laadplaats) && city(o.laadplaats) === city(r.laadplaats) && city(o.losplaats) === city(r.losplaats)).sort((a, b) => String(b.laaddatum).localeCompare(String(a.laaddatum)));
+    let kmTxt = "", kmVal = null;
+    const L = await placeOf(r.laadadres || r.laadplaats), U = await placeOf(r.losadres || r.losplaats);
+    if (L && U) { kmVal = Math.round(km(L, U) * 1.25); kmTxt = `± ${kmVal} km`; }
+    const hist = same.length ? `Vorige keer: ${same.slice(0, 3).map(o => eurS(o.prijs) + " (" + o.ref + ")").join(", ")}.` : "Nog nooit gereden op deze route.";
+    const perKm = bod && kmVal ? ` = ${(bod / kmVal).toFixed(2).replace(".", ",")} €/km` : "";
+    const rit = r.laadplaats && r.losplaats ? `${r.laadplaats} → ${r.losplaats}${r.laaddatum ? " op " + fdt(r.laaddatum) : ""}${r.goederen ? " (" + r.goederen + (r.gewicht ? ", " + r.gewicht + " kg" : "") + ")" : ""}` : "een transport (details in de mail)";
+    const tekst = `💶 ${who} ${bod ? `biedt ${eurS(bod)} voor` : "vraagt een prijs voor"} ${rit}. ${kmTxt ? kmTxt + perKm + ". " : ""}${hist} ${bod ? "Ga je akkoord?" : "Welke prijs wil je voorstellen?"}`;
+    ask("offer-" + item.uid, tekst, { type: "offer", key: "inbox-" + item.uid, bod, km: kmVal, vorige: same.slice(0, 3).map(o => +o.prijs), order: { ...r, prijs: bod }, fileId: f ? f.id : "", fileName: att ? att.name : "", to: replyTo, fromName: own ? (r.klantNaam || "") : (m.fromName || ""), subject: m.subject || "", messageId: m.messageId || "", references: m.references || "", rit });
+  }
+  // jouw beslissing uitvoeren: mail sturen (na jouw klik) en bij akkoord de rit aanmaken
+  async function offer(id, b, user) {
+    const j = store.get("jarvis", id); if (!j || !j.actie || j.actie.type !== "offer") throw Object.assign(new Error("Niet gevonden"), { status: 404 });
+    if (j.klaar) throw Object.assign(new Error("Deze prijsvraag is al afgehandeld"), { status: 409 });
+    const a = j.actie, besluit = b.besluit, bedrag = +b.bedrag || null, who = user.name || user.email;
+    if (!["akkoord", "voorstel", "weigeren"].includes(besluit)) throw Object.assign(new Error("Kies akkoord, voorstel of weigeren"), { status: 400 });
+    if (besluit !== "weigeren" && !(bedrag > 0)) throw Object.assign(new Error("Vul een bedrag in"), { status: 400 });
+    const to = String(b.to || a.to || "").split(/[,;\s]+/).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)); if (!to.length) throw Object.assign(new Error("Geen geldig mailadres"), { status: 400 });
+    await mail.send({ to, cc: [], subject: b.subject || ("Re: " + a.subject), text: String(b.body || ""), attachments: [], inReplyTo: a.messageId || "", references: ((a.references || "") + " " + (a.messageId || "")).trim() });
+    let extra = "";
+    if (besluit === "akkoord") {
+      const r = a.order || {};
+      if (r.laadplaats && r.losplaats) {
+        const f = a.fileId ? { id: a.fileId } : null, uidN = +String(a.key || "").split("-").pop() || 0;
+        const o = makeOrder({ ...r, prijs: bedrag }, findKlant(r, a.to), { m: { from: a.to, subject: a.subject }, item: { uid: uidN }, f, fileName: a.fileName, who: a.fromName || a.to, via: "jouw akkoord op de prijsvraag" });
+        extra = ` Rit ${o.ref} is aangemaakt en wordt ingepland.`;
+        setTimeout(() => tick("offer"), 1500);
+      } else extra = " Maak de rit aan zodra de klant de gegevens stuurt.";
+    }
+    const d = store.patch("jarvis", id, { klaar: new Date().toISOString(), door: who, besluit, bedrag }); emitOffice({ type: "jarvis", item: d });
+    if (a.key && store.get("mailinfo", a.key)) { const mi = store.patch("mailinfo", a.key, { dringend: false, afgehandeld: new Date().toISOString(), door: who }); emitOffice({ type: "mailinfo", item: mi }); }
+    log("prijs", besluit === "akkoord" ? `Akkoord ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).${extra}` : besluit === "voorstel" ? `Prijsvoorstel ${eurS(bedrag)} gemaild naar ${a.fromName || a.to} voor ${a.rit} (door ${who}).` : `${a.fromName || a.to} gemaild dat we ${a.rit} niet kunnen doen (door ${who}).`);
+    return d;
   }
 
   // ---------- 2 + 3. toewijzen en ziekte opvangen ----------
@@ -196,13 +247,16 @@ module.exports = function createJarvis(x) {
       // ziek of afwezig → overdragen
       if (o.chauffeurId) {
         const a = absentIn(o.chauffeurId, span(o)); if (!a) continue;
-        const was = driverName(o.chauffeurId), pick = await pickDriver(o, [o.chauffeurId]);
+        const was = driverName(o.chauffeurId);
+        if (!hasOpen("ziek-" + o.id)) act(`${was} is ${a.type.toLowerCase()}. Ik zoek iemand anders voor ${o.ref}…`, { col: "orders", id: o.id });
+        const pick = await pickDriver(o, [o.chauffeurId]);
         if (pick && auto) { assign(o, pick, `${was} is ${a.type.toLowerCase()}`); log("ziek", `${was} is ${a.type.toLowerCase()}: rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}) gaat nu naar ${driverName(pick.driverId)} (${pick.why}).`, { ref: { col: "orders", id: o.id } }); closeKey("ziek-" + o.id); }
         else if (pick) ask("ziek-" + o.id, `${was} is ${a.type.toLowerCase()} maar heeft rit ${o.ref} (${fdt(o.laaddatum)}). Voorstel: ${driverName(pick.driverId)} (${pick.why}).`, { type: "assign", id: o.id, driverId: pick.driverId, vehicleId: pick.vehicleId, label: "Geef aan " + driverName(pick.driverId) });
         else ask("ziek-" + o.id, `${was} is ${a.type.toLowerCase()} maar heeft rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}). Er is geen andere chauffeur vrij. Zoek een oplossing of een onderaannemer.`, { type: "order", id: o.id });
         continue;
       }
       if (f > horizon) continue;
+      if (!hasOpen("plan-" + o.id)) act(`Ik zoek een vrije chauffeur voor ${o.ref} (${o.laadplaats} → ${o.losplaats})…`, { col: "orders", id: o.id });
       const pick = await pickDriver(o);
       const ver = pick && pick.dist != null && pick.dist > 300;
       if (pick && auto && !ver) { assign(o, pick, pick.why); log("toewijzing", `Rit ${o.ref} (${o.laadplaats} → ${o.losplaats}, ${fdt(o.laaddatum)}) gegeven aan ${driverName(pick.driverId)}${pick.vehicleId ? " met " + ((store.get("vehicles", pick.vehicleId) || {}).kenteken || "") : ""}: ${pick.why}.`, { ref: { col: "orders", id: o.id } }); closeKey("plan-" + o.id); }
@@ -221,46 +275,19 @@ module.exports = function createJarvis(x) {
   }
   const pdfOf = i => { const { k, lines, b } = invoiceParts(i); return pdf.invoicePdf(i, { bedrijf: b, klant: k, lines, fdate, eur: eurS, ogm: ogm(i.nr) }); };
   function cmrAtts(i) { const out = []; for (const id of i.orderIds || []) { const o = store.get("orders", id); if (!o || !o.cmr) continue; const f = readFile(o.cmr.id); if (f && f.buf.length < 8e6) out.push({ o, f }); } return out; }
-  async function invoices() { const c = cfg(); for (const i of store.all("invoices").filter(i => i.status === "Concept")) await invoiceOne(i, c.proef); }
-  async function invoiceOne(i, dry) {
-    const today = todayLocal();
-    {
-      const { k, lines, b } = invoiceParts(i), chk = i.cmrCheck;
-      if (!chk) { if (Date.now() - new Date(i.aangemaakt || 0).getTime() > 3600e3) ask("inv-" + i.id, `Conceptfactuur ${i.nr} voor ${k.naam || "?"} wacht op jou: de CMR kon niet automatisch gecontroleerd worden.`, { type: "invoice", id: i.id }); return; }
-      if (chk.conclusie !== "ok") { ask("inv-" + i.id, `CMR bij factuur ${i.nr} (${k.naam || "?"}) nakijken: ${chk.samenvatting || chk.verschillen || chk.voorbehoud || "niet in orde"}.`, { type: "invoice", id: i.id }); return; }
-      if (!lines.length || lines.some(l => !(+l.bedrag > 0) && l.soort !== "wacht")) { ask("inv-" + i.id, `Factuur ${i.nr} (${k.naam || "?"}) heeft een lijn zonder bedrag. Vul de prijs aan.`, { type: "invoice", id: i.id }); return; }
-      const be = ubl.isBE(k);
-      const datum = today, verval = addDays(today, +i.termijn || +k.termijn || 30);
-      const tot = calcTotals(lines, i.btw), fin = { ...i, lines, datum, vervaldatum: verval, ...tot };
-      if (be) {
-        const pr = ubl.problems(b, k); if (pr.length) { ask("inv-" + i.id, `E-factuur ${i.nr} (${k.naam}) kan ik nog niet maken. Vul eerst aan: ${pr.join(", ")}.`, { type: "invoice", id: i.id }); return; }
-        if (dry) { ask("inv-" + i.id, `Proefmodus: CMR van ${i.nr} is in orde. Ik zou factuur ${i.nr} voor ${k.naam} (${eurS(tot.totaal)}) goedkeuren en het e-factuurbestand voor Lucy maken.`, { type: "sendinv", id: i.id, label: "Doe maar" }); return; }
-        const atts = [{ id: i.nr, description: "Factuur " + i.nr, filename: `Factuur-${i.nr}.pdf`, mime: "application/pdf", bytes: pdfOf(fin) },
-          ...cmrAtts(i).filter(x => x.f.buf.length < 4e6).map(({ o, f }) => ({ id: "CMR-" + o.ref, description: "Ondertekende CMR rit " + o.ref, filename: `CMR-${o.ref}${f.meta.type === "application/pdf" ? ".pdf" : ".jpg"}`, mime: f.meta.type === "application/pdf" ? "application/pdf" : "image/jpeg", bytes: f.buf }))];
-        const refs = [...new Set((i.orderIds || []).map(id => (store.get("orders", id) || {}).referentieKlant).filter(Boolean))];
-        const xml = ubl.xml(fin, { bedrijf: b, klant: k, lines, totals: tot, ogm: ogm(i.nr), refs, atts });
-        const xf = saveFile(Buffer.from(xml, "utf-8"), `Factuur-${i.nr}.xml`, "application/xml", "jarvis");
-        finalize(i, { lines, datum, vervaldatum: verval, ...tot, peppol: { gemaakt: new Date().toISOString(), fileId: xf.id } });
-        log("factuur", `Factuur ${i.nr} voor ${k.naam} (${eurS(tot.totaal)}) goedgekeurd. Belgische klant: het e-factuurbestand staat klaar voor Lucy.`, { ref: { col: "invoices", id: i.id } });
-        ask("lucy-" + i.id, `Lever e-factuur ${i.nr} (${k.naam}, ${eurS(tot.totaal)}) aan in Lucy om ze via Peppol te versturen.`, { type: "download", fileId: xf.id, name: `Factuur-${i.nr}.xml`, id: i.id, label: "Download voor Lucy" });
-        closeKey("inv-" + i.id);
-      } else {
-        const to = String(i.aan || k.emailFactuur || k.email || "").split(/[,;\s]+/).filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
-        if (!to.length) { ask("inv-" + i.id, `Factuur ${i.nr} (${k.naam || "?"}) is klaar, maar de klant heeft geen mailadres. Vul het in en verstuur.`, { type: "invoice", id: i.id }); return; }
-        if (!mail.configured()) { ask("inv-" + i.id, `Factuur ${i.nr} is klaar, maar mail is niet ingesteld.`, { type: "invoice", id: i.id }); return; }
-        if (dry) { ask("inv-" + i.id, `Proefmodus: CMR van ${i.nr} is in orde. Ik zou factuur ${i.nr} (${eurS(tot.totaal)}) met CMR mailen naar ${k.naam} (${to.join(", ")}).`, { type: "sendinv", id: i.id, label: "Verstuur" }); return; }
-        const sig = `\n\nMet vriendelijke groeten,\n${b.naam || "Ghotra Transport"}${b.tel ? "\n" + b.tel : ""}`;
-        const subject = `Factuur ${i.nr} – ${b.naam || "Ghotra Transport"}`;
-        const body = `Beste${k.contact ? " " + k.contact : ""},\n\nIn bijlage vindt u factuur ${i.nr} van ${fdate(datum)} voor ${eurS(tot.totaal)}${cmrAtts(i).length ? ", met de ondertekende CMR" : ""}.\nGelieve te betalen vóór ${fdate(verval)}${b.iban ? " op " + b.iban : ""} met mededeling ${ogm(i.nr)}.` + sig;
-        const attachments = [{ filename: `Factuur-${i.nr}.pdf`, mime: "application/pdf", bytes: pdfOf(fin) }, ...cmrAtts(i).map(({ o, f }) => ({ filename: `CMR-${o.ref}${f.meta.type === "application/pdf" ? ".pdf" : ".jpg"}`, mime: f.meta.type, bytes: f.buf }))];
-        try { await mail.send({ to, cc: [], subject, text: body, attachments }); }
-        catch (e) { ask("inv-" + i.id, `Factuur ${i.nr} versturen lukte niet: ${e.message}`, { type: "invoice", id: i.id }); return; }
-        finalize(i, { lines, datum, vervaldatum: verval, ...tot, verstuurd: new Date().toISOString(), aan: to.join(", ") });
-        store.put("maillog", uid(), { threadId: "", orderId: (i.orderIds || [])[0] || "", invoiceId: i.id, subject, to: to.join(", "), date: new Date().toISOString(), kind: "sent" });
-        log("factuur", `Factuur ${i.nr} (${eurS(tot.totaal)}) met CMR verstuurd naar ${k.naam} (${to.join(", ")}).`, { ref: { col: "invoices", id: i.id } });
-        closeKey("inv-" + i.id);
-      }
-    }
+  // Facturen: Jarvis controleert en zet klaar; jij keurt goed en verstuurt.
+  async function invoices() { for (const i of store.all("invoices").filter(i => i.status === "Concept")) checkInvoice(i); }
+  function checkInvoice(i) {
+    const { k, lines, b } = invoiceParts(i), chk = i.cmrCheck, tot = calcTotals(lines, i.btw);
+    const open = { type: "invoice", id: i.id, label: "Nakijken en versturen" };
+    if (!chk) { if (Date.now() - new Date(i.aangemaakt || 0).getTime() > 3600e3) ask("inv-" + i.id, `Conceptfactuur ${i.nr} voor ${k.naam || "?"} (${eurS(tot.totaal)}) staat klaar, maar de CMR kon niet automatisch gecontroleerd worden. Kijk de CMR zelf even na.`, open); return; }
+    if (chk.conclusie !== "ok") { ask("inv-" + i.id, `⚠️ CMR bij factuur ${i.nr} (${k.naam || "?"}) is niet in orde: ${chk.samenvatting || chk.verschillen || chk.voorbehoud || "nakijken"}. Niet zomaar versturen.`, open); return; }
+    if (!lines.length || lines.some(l => !(+l.bedrag > 0) && l.soort !== "wacht")) { ask("inv-" + i.id, `Factuur ${i.nr} (${k.naam || "?"}) heeft een lijn zonder bedrag. Vul de prijs aan voor je verstuurt.`, open); return; }
+    const missing = [];
+    if (ubl.isBE(k)) missing.push(...ubl.problems(b, k));
+    else if (!(i.aan || k.emailFactuur || k.email)) missing.push("mailadres van de klant");
+    const wacht = lines.filter(l => l.soort === "wacht").reduce((s, l) => s + (+l.bedrag || 0), 0);
+    ask("inv-" + i.id, `🧾 Factuur ${i.nr} voor ${k.naam || "?"} (${eurS(tot.totaal)}${wacht ? ", waarvan " + eurS(wacht) + " wachttijd" : ""}) staat klaar. CMR is in orde: ${chk.samenvatting || "getekend, geen voorbehoud"}.${ubl.isBE(k) ? " Belgische klant: kies \"Goedkeuren · e-factuur (Peppol)\" voor Lucy." : ""}${missing.length ? " Vul eerst nog aan: " + missing.join(", ") + "." : ""}`, open);
   }
   function finalize(i, upd) {
     const prev = store.get("invoices", i.id), d = store.patch("invoices", i.id, { ...upd, status: "Open", jarvis: { goedgekeurd: new Date().toISOString() } }); emit("invoices", i.id, d, prev);
@@ -268,7 +295,7 @@ module.exports = function createJarvis(x) {
   }
 
   // ---------- 5. betalingsherinneringen ----------
-  async function reminders() { const c = cfg(); if (!mail.configured()) return; for (const i of store.all("invoices").filter(i => i.status === "Open" && i.vervaldatum && i.vervaldatum < todayLocal())) await remindOne(i, c.proef, false); }
+  async function reminders() { for (const i of store.all("invoices").filter(i => i.status === "Open" && i.vervaldatum && i.vervaldatum < todayLocal())) await remindOne(i, true, false); }
   async function remindOne(i, dry, force) {
     const c = cfg(), today = todayLocal(), b = bedrijf();
     {
@@ -283,7 +310,7 @@ module.exports = function createJarvis(x) {
       const to = String(i.aan || k.emailFactuur || k.email || "").split(/[,;\s]+/).filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
       if (!to.length) return;
       const sig = `\n\nMet vriendelijke groeten,\n${b.naam || "Ghotra Transport"}${b.tel ? "\n" + b.tel : ""}`;
-      if (dry) { ask("rem-" + i.id + "-" + h.length, `Proefmodus: factuur ${i.nr} van ${k.naam} (${eurS(i.totaal)}) is ${Math.round((new Date(today) - new Date(i.vervaldatum)) / 864e5)} dagen te laat. Ik zou een ${h.length ? (h.length + 1) + "e " : ""}herinnering mailen naar ${to.join(", ")}.`, { type: "remind", id: i.id, label: "Verstuur herinnering" }); return; }
+      if (dry) { ask("rem-" + i.id + "-" + h.length, `💶 Factuur ${i.nr} van ${k.naam} (${eurS(i.totaal)}) is ${Math.round((new Date(today) - new Date(i.vervaldatum)) / 864e5)} dagen te laat betaald. Ik heb een ${h.length ? (h.length + 1) + "e " : ""}herinnering klaargezet voor ${to.join(", ")}.`, { type: "remind", id: i.id, n: h.length, label: "Herinnering nakijken" }); return; }
       const subject = `${h.length ? (h.length + 1) + "e herinnering" : "Herinnering"} factuur ${i.nr}`;
       const body = `Beste${k.contact ? " " + k.contact : ""},\n\nVolgens onze gegevens staat factuur ${i.nr} van ${fdate(i.datum)} (${eurS(i.totaal)}) nog open. De vervaldatum was ${fdate(i.vervaldatum)}.\nWilt u de betaling nakijken${b.iban ? " en het bedrag overmaken op " + b.iban : ""} met mededeling ${i.ogm || ogm(i.nr)}?\n\nIs de betaling al onderweg, dan mag u dit bericht negeren.` + sig;
       try { await mail.send({ to, cc: [], subject, text: body, attachments: [{ filename: `Factuur-${i.nr}.pdf`, mime: "application/pdf", bytes: pdfOf(i) }] }); }
@@ -336,8 +363,9 @@ module.exports = function createJarvis(x) {
       else if (/^plan-/.test(k)) { const o = store.get("orders", id); done = !o || !!o.chauffeurId || o.status !== "Gepland"; }
       else if (/^ziek-/.test(k)) { const o = store.get("orders", id); done = !o || !LIVE.includes(o.status) || !absentIn(o.chauffeurId, span(o)); }
       else if (/^inv-/.test(k)) { const i = store.get("invoices", id); done = !i || i.status !== "Concept"; }
+      else if (/^offer-/.test(k)) done = false;
       else if (/^(betaal|lucy)-/.test(k)) { const i = store.get("invoices", id); done = !i || i.status === "Betaald"; }
-      else if (/^rem-/.test(k)) { done = !I || I.status !== "Open"; }
+      else if (/^rem-/.test(k)) { done = !I || I.status !== "Open" || (I.herinneringen || []).length > (a.n || 0); }
       else if (/^waak-gezien-/.test(k)) done = !O || !!O.gezien || O.status !== "Gepland";
       else if (/^waak-start-/.test(k)) done = !O || O.status !== "Gepland";
       else if (/^waak-cmr-/.test(k)) done = !O || !!O.cmr;
@@ -384,6 +412,7 @@ module.exports = function createJarvis(x) {
   async function tick(why) {
     if (busy) return; const c = cfg(); if (!c.aan) return;
     busy = true; winCache = new Map();
+    act("Ik controleer mail, planning, ritten en facturen…", { view: "vandaag" }, true);
     try {
       if (mail.configured() && ai.configured()) {
         let item; while ((item = q()[0])) { store.setting("jarvisMailQ", q().slice(1)); try { await processMail(item); } catch (e) { log("fout", `Mail "${item.subject}" verwerken lukte niet: ${e.message}`); } }
@@ -400,6 +429,18 @@ module.exports = function createJarvis(x) {
   }
   async function step(name, fn) { try { await fn(); } catch (e) { console.error("Jarvis " + name + ":", e); log("fout", `Jarvis (${name}): ${e.message}`); } }
 
+  // Mails van de laatste 24 uur die Jarvis nog niet las alsnog laten lezen.
+  async function catchup() {
+    if (!mail.configured()) throw Object.assign(new Error("Mail is niet gekoppeld"), { status: 409 });
+    const r = await mail.list({ box: "inbox", page: 0, size: 30 }), seen = store.setting("jarvisSeen") || [], since = Date.now() - 24 * 3600e3;
+    const fresh = (r.items || []).filter(m => !seen.includes(m.uid) && !q().some(x => x.uid === m.uid) && (!m.date || new Date(m.date).getTime() > since) && !/notify\.railway|no-?reply@accounts\.google|mailer-daemon/i.test(m.from || ""));
+    const keep = cfg().aan; if (!keep) throw Object.assign(new Error("Zet Jarvis eerst aan"), { status: 409 });
+    store.setting("jarvisMailQ", [...q(), ...fresh.map(m => ({ uid: m.uid, from: m.from, fromName: m.fromName || "", subject: m.subject || "", date: m.date, hasAtt: !!m.hasAtt }))].slice(-100));
+    act(`Ik lees ${fresh.length} ${fresh.length === 1 ? "mail" : "mails"} van vandaag…`, { view: "mail" });
+    setTimeout(() => tick("catchup"), 500);
+    return { aantal: fresh.length };
+  }
+
   // een vraag afhandelen vanuit de app
   async function resolve(id, action, user) {
     const j = store.get("jarvis", id); if (!j) throw Object.assign(new Error("Niet gevonden"), { status: 404 });
@@ -415,8 +456,6 @@ module.exports = function createJarvis(x) {
       if (o.chauffeurId) push.notifyDriver(o.chauffeurId, { title: `Rit ${o.ref} geannuleerd`, body: `${o.laadplaats} → ${o.losplaats} gaat niet door.`, url: "/chauffeur" });
       log("rit", `Rit ${o.ref} geannuleerd (goedgekeurd door ${user.name || user.email})${o.chauffeurId ? "; " + driverName(o.chauffeurId) + " kreeg een melding" : ""}.`, { ref: { col: "orders", id: o.id } });
     }
-    if (action === "doe" && j.actie && j.actie.type === "sendinv") { const i = store.get("invoices", j.actie.id); if (!i || i.status !== "Concept") throw Object.assign(new Error("Deze factuur is al afgehandeld"), { status: 409 }); closeKey("inv-" + i.id); await invoiceOne(i, false); }
-    if (action === "doe" && j.actie && j.actie.type === "remind") { const i = store.get("invoices", j.actie.id); if (!i || i.status !== "Open") throw Object.assign(new Error("Deze factuur staat niet meer open"), { status: 409 }); await remindOne(i, false, true); }
     if (j.actie && j.actie.key && store.get("mailinfo", j.actie.key)) { const mi = store.patch("mailinfo", j.actie.key, { dringend: false, afgehandeld: new Date().toISOString(), door: user.name || user.email }); emitOffice({ type: "mailinfo", item: mi }); }
     const d = store.patch("jarvis", id, { klaar: new Date().toISOString(), door: user.name || user.email }); emitOffice({ type: "jarvis", item: d });
     return d;
@@ -452,5 +491,5 @@ module.exports = function createJarvis(x) {
 
   const timer = setInterval(() => tick("timer"), 3 * 60 * 1000);
   setTimeout(() => tick("start"), 20000);
-  return { tick, onNewMail, update, resolve, cfg, tools, DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
+  return { tick, onNewMail, update, resolve, offer, catchup, cfg, tools, DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
 };

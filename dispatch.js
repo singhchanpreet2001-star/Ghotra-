@@ -549,7 +549,7 @@ async function loadMail(more){
   render()}
 function vMail(){const m=S.mail,gm=S.status&&S.status.mailGmail;
   const nd=(S.status&&S.status.mailDringend)||0;
-  const presets=[["Inbox","inbox","",0],["Ongelezen","inbox","",1],[`🔴 Dringend${nd?" ("+nd+")":""}`,"inbox","",0,"dringend"],["📥 Ritorders","inbox","",0,"ritorder"],...(gm?[["Met PDF","inbox","has:attachment filename:pdf",0]]:[]),["Verzonden","sent","",0]];
+  const presets=[["Inbox","inbox","",0],["Ongelezen","inbox","",1],[`🔴 Dringend${nd?" ("+nd+")":""}`,"inbox","",0,"dringend"],["📥 Ritorders","inbox","",0,"ritorder"],["💶 Prijsvragen","inbox","",0,"prijsvraag"],...(gm?[["Met PDF","inbox","has:attachment filename:pdf",0]]:[]),["Verzonden","sent","",0]];
   let body="";
   if(m.state==="nomcp")body=`<div class="notice"><b>Mail is nog niet ingesteld</b>${S.me&&S.me.role==="admin"?`Koppel je mailbox onder Beheer → Koppelingen. Ritten, klanten en facturen werken intussen gewoon.<div><button class="btn sm primary" data-act="nav" data-v="koppelingen">Mail instellen</button></div>`:"Vraag de beheerder om de mailbox te koppelen."}</div>`;
   else if(m.state==="loading")body=`<div class="loading"><span class="spin"></span> Mail ophalen…</div>`;
@@ -563,8 +563,8 @@ function vMail(){const m=S.mail,gm=S.status&&S.status.mailGmail;
   ${body}`}
 
 const isPdfAtt=a=>/\.pdf$/i.test(a.name||"")||/pdf/i.test(a.type||"");
-const MSOORT={ritorder:"Ritorder",ritwijziging:"Ritwijziging",vraag:"Vraag",factuur:"Factuur",administratie:"Administratie",reclame:"Reclame",anders:"Overig"};
-function mailTag(i){if(!i)return"";return (i.dringend?' <span class="tag dr">Dringend</span>':"")+(["ritorder","ritwijziging"].includes(i.soort)?` <span class="tag">${MSOORT[i.soort]}${i.ritten?" · "+i.ritten+" rit"+(i.ritten>1?"ten":""):""}</span>`:"")}
+const MSOORT={ritorder:"Ritorder",ritwijziging:"Ritwijziging",prijsvraag:"Prijsvraag",vraag:"Vraag",factuur:"Factuur",administratie:"Administratie",reclame:"Reclame",anders:"Overig"};
+function mailTag(i){if(!i)return"";return (i.dringend?' <span class="tag dr">Dringend</span>':"")+(["ritorder","ritwijziging","prijsvraag"].includes(i.soort)?` <span class="tag">${MSOORT[i.soort]}${i.ritten?" · "+i.ritten+" rit"+(i.ritten>1?"ten":""):""}</span>`:"")}
 function shThread(sh){
   if(sh.state==="loading")return sheetWrap("Mail",'<div class="busy"><span class="spin"></span>Bericht openen…</div>');
   if(sh.state==="err")return sheetWrap("Mail",`<div class="notice err">${esc(mailErr(sh.err))}</div><div><button class="btn" data-act="thread" data-id="${esc(sh.id)}">Opnieuw proberen</button></div>`);
@@ -739,6 +739,7 @@ document.addEventListener("change",async e=>{const el=e.target;
       if(cur&&absInRange(cur,fr,to)){sel.value="";toast((byId("drivers",cur)||{}).naam+" is dan afwezig; kies een andere chauffeur")}}}
   const a=el.dataset.actChange;
   if(a==="caldriver"){S.cal.driver=el.value;render();return}
+  if(a==="jcur"){try{localStorage.setItem("ghotra_jcur",el.checked?"1":"0")}catch(e){}if(el.checked)jarvisAct({text:"Hallo! Hier zie je voortaan wat ik doe.",target:{view:"jarvis"}});else{const c=$("#jcur");if(c)c.classList.remove("on")}return}
   if(a==="invklant"){S.sheet.klantId=el.value;S.sheet.orderId="";renderSheet()}
   if(a==="linkorder"&&S.sheet&&S.sheet.type==="thread"){const m=S.sheet.data||{},oid=el.value;
     if(await put("maillog",S.sheet.id,{threadId:S.sheet.id,orderId:oid,subject:m.subject||"",from:senderName(m),date:m.date||new Date().toISOString(),kind:"link"}))toast(oid?"Gekoppeld aan "+byId("orders",oid).ref:"Koppeling verwijderd")}});
@@ -915,7 +916,7 @@ function vMeer(){const admin=S.me&&S.me.role==="admin",st=S.status||{};
   ${hasVoorbeeld()?`<section class="sec"><h2>Voorbeeldgegevens</h2><div class="notice">Gegevens met het label <span class="tag">Voorbeeld</span> zijn testgegevens.<div><button class="btn danger" data-act="wipe">Voorbeeldgegevens wissen</button></div></div></section>`:""}`}
 
 function renderSheet(){const sh=S.sheet;if(!sh)return;const p=$("#panel");
-  const r={form:shForm,order:shOrder,invoice:shInvoice,newInvoice:shNewInvoice,thread:shThread,compose:shCompose,doc:shDoc,busy:shBusy,review:shReview,docnew:shDocNew,docview:shDocView,conflicts:shConflicts,route:shRoute,pwd:shPwd,newuser:shNewUser,account:shAccount}[sh.type];
+  const r={form:shForm,order:shOrder,invoice:shInvoice,newInvoice:shNewInvoice,thread:shThread,compose:shCompose,doc:shDoc,busy:shBusy,review:shReview,docnew:shDocNew,docview:shDocView,conflicts:shConflicts,route:shRoute,offer:shOffer,pwd:shPwd,newuser:shNewUser,account:shAccount}[sh.type];
   if(sh.type==="route"&&routeMap&&p.querySelector("#map")&&sh.state==="ok")return;
   if(routeMap&&sh.type!=="route"){routeMap.remove();routeMap=null;truckMarker=null}
   p.innerHTML=r(sh);
@@ -1006,7 +1007,8 @@ Object.assign(SUBMIT,{
      await api("/api/mail/send",{method:"POST",json:{to,cc,subject:f.elements.subject.value,body:f.elements.body.value,attachments}});
      const oid=f.elements.orderId.value;
      if(oid||d.invoiceId)put("maillog",uid(),{threadId:"",orderId:oid||"",invoiceId:d.invoiceId||"",subject:f.elements.subject.value,to:to.join(", "),date:new Date().toISOString(),kind:"sent"});
-     if(d.invoiceId)patch("invoices",d.invoiceId,{verstuurd:new Date().toISOString(),aan:to.join(", ")});
+     if(d.invoiceId&&d.herinnering){const iv=byId("invoices",d.invoiceId);patch("invoices",d.invoiceId,{herinneringen:[...((iv&&iv.herinneringen)||[]),new Date().toISOString()]});setTimeout(loadJarvis,1500)}
+     else if(d.invoiceId)patch("invoices",d.invoiceId,{verstuurd:new Date().toISOString(),aan:to.join(", ")});
      toast("Mail verstuurd");closeSheet()}
    catch(e){btn.disabled=false;btn.textContent="Versturen";toast(mailErr(e))}},
  review:async(f,sub)=>{const mode=(sub&&sub.value)||"save",i=byId("invoices",S.sheet.id);if(!i)return;const r=readReview(f,i),k=byId("customers",i.klantId)||{};
@@ -1151,11 +1153,12 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
         if(m.col==="absences"&&!prev){const c=byId("drivers",d.chauffeurId);toast(`${c?c.naam:"Een chauffeur"}: ${d.type.toLowerCase()} gemeld`)}
         if(m.col==="invoices"&&!prev&&d.status==="Concept")toast(`Conceptfactuur ${d.nr} klaar ter controle`)}
       liveRender()}
+    if(m.type==="jact"){jarvisAct(m);return}
     if(m.type==="mailinfo"&&m.item){const t=S.mail.threads.find(x=>x.box==="inbox"&&+x.uid===+m.item.uid);if(t)t.info=m.item;S.status=S.status||{};if(m.item.dringend&&!m.item.afgehandeld&&!(S._seenDr||(S._seenDr=new Set())).has(m.item.id)){S._seenDr.add(m.item.id);S.status.mailDringend=(S.status.mailDringend||0)+1;toast("🔴 Dringende mail: "+(m.item.samenvatting||m.item.subject))}
       if(m.item.afgehandeld&&!m.item.dringend)S.status.mailDringend=Math.max(0,(S.status.mailDringend||1)-1);
       if(S.view==="mail")render();if(S.sheet&&S.sheet.type==="thread")renderSheet();return}
     if(m.type==="jarvis"&&m.item){if(S.jarvis&&S.jarvis.items){const i=S.jarvis.items.findIndex(x=>x.id===m.item.id);if(i>=0)S.jarvis.items[i]=m.item;else S.jarvis.items.unshift(m.item)}
-      if(m.item.open&&!m.item.klaar)toast("Jarvis: "+m.item.tekst.slice(0,90));else if(m.item.soort==="update")toast("Nieuwe update van Jarvis");
+      if(!jcurOn()||document.hidden){if(m.item.open&&!m.item.klaar)toast("Jarvis: "+m.item.tekst.slice(0,90));else if(m.item.soort==="update")toast("Nieuwe update van Jarvis")}
       if(["jarvis","vandaag","meer"].includes(S.view))render();return}
     if(m.type==="mail"){const items=m.items||[];if(!items.length)return;
       if(S.mail.box==="inbox"&&!S.mail.q&&(S.mail.state==="ok"||S.mail.state==="more")){const have=new Set(S.mail.threads.map(t=>t.box+"-"+t.uid));S.mail.threads=items.filter(t=>!have.has(t.box+"-"+t.uid)).concat(S.mail.threads)}
@@ -1166,21 +1169,24 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
 
 
 /* ---------- Jarvis (automatische piloot) ---------- */
-const JICON={rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",factuur:"🧾",herinnering:"💶",vraag:"❓",update:"🗒️",fout:"⚠️"};
+const JICON={prijs:"💶",rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",factuur:"🧾",herinnering:"💶",vraag:"❓",update:"🗒️",fout:"⚠️"};
 async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag"].includes(S.view))render()}
 const jOpen=()=>((S.jarvis||{}).items||[]).filter(j=>j.open&&!j.klaar);
 function jarvisCard(){const J=S.jarvis;if(!J||J.state!=="ok")return"";const c=J.config||{},open=jOpen(),up=(J.items||[]).find(j=>j.soort==="update");
   return `<section class="sec"><div class="sec-h"><h2>🤖 Jarvis</h2><button class="btn sm" data-act="nav" data-v="jarvis">Openen</button></div>
-   <button class="kpi jcard" data-act="nav" data-v="jarvis"><span class="grow"><b>${!c.aan?"Staat uit":c.proef?"Proefmodus: stelt voor, verstuurt niets":"Regelt alles automatisch"}</b>
+   <button class="kpi jcard" data-act="nav" data-v="jarvis"><span class="grow"><b>${!c.aan?"Staat uit":c.proef?"Proefmodus: stelt chauffeurs voor":"Plant en controleert automatisch"}</b>
    <span class="muted" style="font-size:12.5px;display:block">${open.length?`${open.length} ${open.length===1?"vraag":"vragen"} voor jou`:"Geen vragen voor jou"}${up?" · laatste update "+ftime(up.at):""}</span></span>${open.length?`<span class="badge">${open.length}</span>`:""}</button></section>`}
 function jItem(j){const a=j.actie||{},ref=j.ref||{};
   const VV={drivers:"chauffeurs",vehicles:"voertuigen",documents:"documenten"};
   const btns=j.open&&!j.klaar?[
-    ["assign","sendinv","remind","cancel"].includes(a.type)?`<button class="btn sm ${a.type==="cancel"?"danger":"primary"}" data-act="jdoe" data-id="${j.id}">${esc(a.label||"Doe maar")}</button>`:"",
+    ["assign","cancel"].includes(a.type)?`<button class="btn sm ${a.type==="cancel"?"danger":"primary"}" data-act="jdoe" data-id="${j.id}">${esc(a.label||"Doe maar")}</button>`:"",
+    a.type==="offer"?(a.bod?`<button class="btn sm primary" data-act="joffer" data-id="${j.id}" data-v="akkoord">Akkoord ${esc(eur(a.bod))}</button>`:"")+`<button class="btn sm ${a.bod?"":"primary"}" data-act="joffer" data-id="${j.id}" data-v="voorstel">${a.bod?"Ander bedrag":"Prijs voorstellen"}</button><button class="btn sm" data-act="joffer" data-id="${j.id}" data-v="weigeren">Weigeren</button>`:"",
+    a.type==="remind"?`<button class="btn sm primary" data-act="jremind" data-id="${a.id}">Herinnering nakijken</button>`:"",
+    a.type==="invoice"?`<button class="btn sm primary" data-act="jinv" data-id="${a.id}">${esc(a.label||"Factuur openen")}</button>`:"",
     a.type==="download"?`<a class="btn sm primary" href="/api/files/${encodeURIComponent(a.fileId)}?download" download="${esc(a.name||"")}">${esc(a.label||"Download")}</a>`:"",
-    a.key?`<button class="btn sm ${["cancel","order"].includes(a.type)?"":"primary"}" data-act="jmail" data-id="${esc(a.key)}">Mail openen</button>`:"",
+    a.key?`<button class="btn sm ${["cancel","order","offer"].includes(a.type)?"":"primary"}" data-act="jmail" data-id="${esc(a.key)}">Mail openen</button>`:"",
     ["order","assign","cancel"].includes(a.type)&&a.id?`<button class="btn sm" data-act="order" data-id="${a.id}">Rit openen</button>`:"",
-    ["invoice","sendinv","remind","download"].includes(a.type)?`<button class="btn sm" data-act="jinv" data-id="${a.id}">Factuur openen</button>`:"",
+    ["remind","download"].includes(a.type)?`<button class="btn sm" data-act="jinv" data-id="${a.id}">Factuur openen</button>`:"",
     a.type==="verval"&&VV[a.col]?(a.col==="documents"?`<button class="btn sm" data-act="nav" data-v="documenten">Documenten</button>`:`<button class="btn sm" data-act="edit-${a.col}" data-id="${a.id}">Datum aanpassen</button>`):"",
     a.type==="open"?`<button class="btn sm" data-act="nav" data-v="${esc(String(a.url||"").split("#")[1]||"mail")}">Openen</button>`:"",
     `<button class="btn sm" data-act="jklaar" data-id="${j.id}">${a.type==="download"?"Gedaan in Lucy":a.type==="verval"?"Gezien":"Klaar"}</button>`].join(""):
@@ -1193,19 +1199,19 @@ function vJarvis(){const J=S.jarvis;if(!J||J.state!=="ok"){if(!J)loadJarvis();re
   const warn=[!st.mail&&"mail is niet gekoppeld (orders lezen en facturen versturen)",!st.ai&&"AI is niet gekoppeld (PDF's en CMR's lezen)",!st.here&&"HERE is niet gekoppeld (afstanden voor het kiezen van een chauffeur)",noLogin.length&&`${noLogin.map(d=>d.naam).join(", ")} ${noLogin.length===1?"heeft":"hebben"} geen login; Jarvis geeft alleen ritten aan chauffeurs met de app`,(!b.iban||!b.btw)&&"IBAN of btw-nummer van je bedrijf ontbreekt (nodig voor facturen)"].filter(Boolean);
   const chk=(k,l,s)=>`<label class="jchk"><input type="checkbox" name="${k}" ${c[k]?"checked":""} ${admin?"":"disabled"}><span><b>${l}</b><small>${s}</small></span></label>`;
   return `<div class="jhero ${c.aan?(c.proef?"proef":"aan"):"uit"}"><div class="grow"><div class="lbl">Jarvis</div><h2>${!c.aan?"Staat uit":c.proef?"Proefmodus":"Automatisch"}</h2>
-    <p>${!c.aan?"Zet Jarvis aan om orders, planning, facturen en herinneringen te laten regelen.":c.proef?"Jarvis doet alles klaar en toont wat hij zou doen. Hij verstuurt niets en wijst niets toe zonder jouw klik.":"Jarvis regelt het zelf en vraagt je alleen iets als hij twijfelt."}</p></div>
+    <p>${!c.aan?"Zet Jarvis aan om orders, planning, facturen en herinneringen te laten regelen.":c.proef?"Jarvis leest en controleert alles, maar wijst nog geen ritten toe: hij stelt een chauffeur voor en jij klikt.":"Jarvis plant zelf de chauffeurs in en controleert alles. Prijzen en facturen beslis jij altijd."}</p></div>
     ${admin?`<div class="actions">${c.aan?`<button class="btn" data-act="jset" data-k="aan" data-v="0">Uitzetten</button>${c.proef?`<button class="btn primary" data-act="jset" data-k="proef" data-v="0">Volledig automatisch</button>`:`<button class="btn" data-act="jset" data-k="proef" data-v="1">Terug naar proefmodus</button>`}`:`<button class="btn primary" data-act="jset" data-k="aan" data-v="1">Aanzetten (proefmodus)</button>`}</div>`:""}</div>
    ${warn.length?`<div class="notice warn"><b>Om goed te werken heeft Jarvis nog nodig</b>${warn.map(w=>`<span>• ${esc(w)}</span>`).join("")}</div>`:""}
    <section class="sec"><div class="sec-h"><h2>Vragen voor jou</h2><small>${open.length||""}</small></div><div class="jlist">${open.length?open.map(jItem).join(""):'<div class="empty">Niets te doen. Jarvis heeft alles onder controle.</div>'}</div></section>
-   <section class="sec"><div class="sec-h"><h2>Laatste update</h2><span class="actions"><button class="btn sm" data-act="jupdate">Nu een update</button><button class="btn sm" data-act="jrun">Nu laten werken</button></span></div>
+   <section class="sec"><div class="sec-h"><h2>Laatste update</h2><span class="actions"><button class="btn sm" data-act="jupdate">Nu een update</button><button class="btn sm" data-act="jrun">Nu laten werken</button><button class="btn sm" data-act="jcatch">Mails van vandaag laten lezen</button></span></div>
     ${ups[0]?`<div class="jupd"><div class="t2 muted">${esc(ups[0].titel||"")} · ${ftime(ups[0].at)}</div><div class="jtext">${esc(ups[0].tekst)}</div></div>`:'<div class="empty">Nog geen update. Je krijgt er een om de '+(c.updateUren||2)+' uur tijdens werkuren.</div>'}</section>
    <section class="sec"><div class="sec-h"><h2>Wat Jarvis deed</h2></div><div class="jlist">${logs.slice(0,60).map(jItem).join("")||'<div class="empty">Nog niets.</div>'}</div></section>
+   <section class="sec"><label class="jchk"><input type="checkbox" data-act-change="jcur" ${jcurOn()?"checked":""}><span><b>Jarvis-muisje tonen</b><small>Een cursor met tekstballon toont live wat Jarvis doet terwijl de app openstaat (alleen op dit toestel).</small></span></label></section>
    <section class="sec"><h2>Wat mag Jarvis zelf doen?</h2><form class="form" data-form="jarviscfg">
     ${chk("orders","Ritorders uit de mail → rit","Jarvis leest elke nieuwe mail en sorteert ze (ritorder, wijziging, vraag, factuur, reclame…). Dringende mails krijg je meteen als melding. Alleen echte ritorders (PDF of in de mailtekst) worden een rit; andere mails laat hij met rust.")}
-    ${chk("bevestiging","Orderbevestiging naar de klant","Na een nieuwe ritorder antwoordt Jarvis op de mail van de klant met onze ritreferentie, laad- en losmoment en prijs.")}
-    ${chk("assign","Chauffeur en vrachtwagen kiezen","Voor ritten van vandaag tot 3 dagen vooruit. Kiest de vrije chauffeur die het dichtst bij de laadplaats is. Valt iemand ziek, dan gaan zijn ritten naar een ander.")}
-    ${chk("invoice","Factuur versturen na goede CMR","Buitenlandse klanten: mail met factuur en CMR. Belgische klanten: e-factuurbestand voor Lucy (Peppol).")}
-    ${chk("reminders","Betalingsherinneringen","Mailt de klant als een factuur te laat betaald is. Na het maximum aantal herinneringen vraagt Jarvis of je wil bellen.")}
+    ${chk("assign","Chauffeur en vrachtwagen zelf kiezen","Voor ritten van vandaag tot 3 dagen vooruit. Kiest de vrije chauffeur die het dichtst bij de laadplaats is. Valt iemand ziek, dan gaan zijn ritten naar een ander.")}
+    ${chk("reminders","Te late betalingen opvolgen","Jarvis zet een herinnering klaar als een factuur te laat betaald is. Jij leest ze na en verstuurt. Na het maximum vraagt hij of je wil bellen.")}
+    <div class="notice full"><b>Wat Jarvis nooit zelf doet</b><span>• Prijzen: bij een prijsvraag vat hij alles samen (route, km, vorige prijzen) en jij kiest akkoord, ander bedrag of weigeren. Pas na jouw klik gaat de mail weg.</span><span>• Facturen: hij controleert de CMR en zet de factuur klaar. Jij keurt goed en verstuurt.</span><span>• Antwoorden aan klanten en ritten aanpassen of annuleren.</span></div>
     ${chk("waakhond","Ritten opvolgen","Herinnert de chauffeur als hij zijn rit niet geopend heeft of de CMR-foto vergeet, en waarschuwt jou als iemand niet vertrokken is.")}
     <label class="field" for="j_u"><span class="lbl">Update om de</span><select id="j_u" name="updateUren" ${admin?"":"disabled"}>${[1,2,3,4,6].map(n=>`<option value="${n}" ${+c.updateUren===n?"selected":""}>${n} uur</option>`).join("")}</select></label>
     <label class="field" for="j_v"><span class="lbl">Werkuren</span><span style="display:flex;gap:6px;align-items:center"><input id="j_v" name="van" type="number" min="0" max="23" value="${c.van}" ${admin?"":"disabled"}> tot <input name="tot" type="number" min="1" max="24" value="${c.tot}" ${admin?"":"disabled"}></span></label>
@@ -1223,10 +1229,61 @@ Object.assign(ACT,{
  jmail:d=>openThread(d.id),
  jinv:d=>{const i=byId("invoices",d.id);if(!i)return toast("Factuur niet gevonden");openSheet(i.status==="Concept"?{type:"review",id:i.id}:{type:"invoice",id:i.id})},
  jupdate:async(d,btn)=>{btn.disabled=true;btn.textContent="Schrijven…";try{await api("/api/jarvis/update",{method:"POST",json:{}});await loadJarvis()}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Nu een update"},
+ jcatch:async(d,btn)=>{btn.disabled=true;try{const r=await api("/api/jarvis/catchup",{method:"POST",json:{}});toast(r.aantal?`Jarvis leest ${r.aantal} ${r.aantal===1?"mail":"mails"}`:"Geen ongelezen mails van vandaag voor Jarvis")}catch(e){toast(e.message)}btn.disabled=false},
  jrun:async(d,btn)=>{btn.disabled=true;btn.textContent="Bezig…";try{await api("/api/jarvis/run",{method:"POST",json:{}});await reloadData();await loadJarvis();toast("Jarvis is klaar met zijn ronde")}catch(e){toast(e.message)}btn.disabled=false;btn.textContent="Nu laten werken"}});
 SUBMIT.jarviscfg=async f=>{const fd=new FormData(f),n=k=>+fd.get(k);
-  if(await saveJarvis({bevestiging:fd.has("bevestiging"),waakhond:fd.has("waakhond"),orders:fd.has("orders"),assign:fd.has("assign"),invoice:fd.has("invoice"),reminders:fd.has("reminders"),weekend:fd.has("weekend"),updateUren:n("updateUren")||2,van:n("van"),tot:n("tot")||19,herinneringNa:n("herinneringNa"),herinneringOm:n("herinneringOm")||14,maxHerinneringen:n("maxHerinneringen")||3}))toast("Instellingen van Jarvis bewaard")};
+  if(await saveJarvis({bevestiging:fd.has("bevestiging"),waakhond:fd.has("waakhond"),orders:fd.has("orders"),assign:fd.has("assign"),reminders:fd.has("reminders"),weekend:fd.has("weekend"),updateUren:n("updateUren")||2,van:n("van"),tot:n("tot")||19,herinneringNa:n("herinneringNa"),herinneringOm:n("herinneringOm")||14,maxHerinneringen:n("maxHerinneringen")||3}))toast("Instellingen van Jarvis bewaard")};
 
+
+/* ---------- prijsvraag beantwoorden (pas na jouw klik) ---------- */
+function offerBody(a,besluit,bedrag){const b=S.bedrijf||{},nm=(a.fromName||"").split(/[\s<@]/)[0],sig=`\n\nMet vriendelijke groeten,\n${b.naam||"Ghotra Transport"}${b.tel?"\n"+b.tel:""}`,x=bedrag?eur(bedrag):"…";
+  const hi=`Goedendag${nm&&!/[@.]/.test(nm)?" "+nm:""},\n\nBedankt voor uw aanvraag. `;
+  if(besluit==="akkoord")return hi+`Wij gaan akkoord met ${x} excl. btw voor ${a.rit}.\nWij plannen de rit in.`+sig;
+  if(besluit==="voorstel")return hi+`Voor ${a.rit} kunnen wij dit transport uitvoeren voor ${x} excl. btw.\nLaat u ons weten of u akkoord gaat? Dan plannen wij de rit meteen in.`+sig;
+  return hi+`Helaas kunnen wij ${a.rit} niet uitvoeren.`+sig}
+function shOffer(sh){const j=((S.jarvis||{}).items||[]).find(x=>x.id===sh.id);if(!j)return sheetWrap("Prijsvraag",'<div class="notice err">Niet gevonden.</div>');const a=j.actie||{},bes=sh.besluit;
+  const bedrag=bes==="akkoord"?a.bod:(sh.bedrag||"");
+  const T={akkoord:"Akkoord geven",voorstel:"Prijs voorstellen",weigeren:"Weigeren"}[bes];
+  return sheetWrap(T,`<div class="notice">${esc(j.tekst)}</div>
+   ${a.vorige&&a.vorige.length||a.km?`<div class="muted" style="font-size:13px">${a.km?`Afstand ± ${a.km} km. `:""}${a.vorige&&a.vorige.length?"Vorige prijzen op deze route: "+a.vorige.map(eur).join(", ")+".":""}</div>`:""}
+   <form class="form" data-form="offer" data-id="${j.id}" data-b="${bes}">
+    ${bes!=="weigeren"?`<label class="field" for="of_b"><span class="lbl">Bedrag excl. btw (€)</span><input id="of_b" name="bedrag" type="number" step="1" min="1" required value="${esc(bedrag||"")}" ${bes==="akkoord"?"readonly":""}></label>${a.km?`<span class="field"><span class="lbl">Per km</span><span id="of_km" class="mono" style="padding:10px 0">${bedrag?(bedrag/a.km).toFixed(2).replace(".",",")+" €/km":"—"}</span></span>`:""}`:""}
+    <label class="field full" for="of_to"><span class="lbl">Aan</span><input id="of_to" name="to" value="${esc(a.to||"")}" required></label>
+    <label class="field full" for="of_s"><span class="lbl">Onderwerp</span><input id="of_s" name="subject" value="${esc(/^re:/i.test(a.subject||"")?a.subject:"Re: "+(a.subject||"uw aanvraag"))}"></label>
+    <label class="field full" for="of_body"><span class="lbl">Mail (pas aan wat je wil)</span><textarea id="of_body" name="body" rows="10">${esc(offerBody(a,bes,bedrag))}</textarea></label>
+    <div class="full muted" style="font-size:12.5px">${bes==="akkoord"?"Na het versturen maakt Jarvis de rit aan en plant hij ze in.":bes==="voorstel"?"Gaat de klant akkoord, dan wordt zijn antwoord een ritorder.":"De klant krijgt een vriendelijke weigering."}</div>
+    <div class="full actions"><button class="btn primary" type="submit">Versturen</button><button class="btn" type="button" data-act="close">Annuleren</button></div></form>`)}
+document.addEventListener("input",e=>{if(e.target.id!=="of_b"||!S.sheet||S.sheet.type!=="offer")return;const j=((S.jarvis||{}).items||[]).find(x=>x.id===S.sheet.id);if(!j)return;const v=+e.target.value||0,ta=$("#of_body");
+  if(ta&&!ta.dataset.touched)ta.value=offerBody(j.actie,S.sheet.besluit,v);const k=$("#of_km");if(k&&j.actie.km)k.textContent=v?(v/j.actie.km).toFixed(2).replace(".",",")+" €/km":"—";S.sheet.bedrag=v});
+document.addEventListener("input",e=>{if(e.target.id==="of_body")e.target.dataset.touched="1"});
+Object.assign(ACT,{
+ joffer:d=>openSheet({type:"offer",id:d.id,besluit:d.v}),
+ jremind:d=>{const i=byId("invoices",d.id);if(!i)return toast("Factuur niet gevonden");openSheet({type:"compose",draft:{...tpl("herinnering",i.id),herinnering:true}})}});
+SUBMIT.offer=async f=>{const btn=f.querySelector("[type=submit]");btn.disabled=true;btn.textContent="Versturen…";
+  try{const fd=new FormData(f);await api(`/api/jarvis/item/${f.dataset.id}/offer`,{method:"POST",json:{besluit:f.dataset.b,bedrag:+fd.get("bedrag")||null,to:fd.get("to"),subject:fd.get("subject"),body:fd.get("body")}});
+    toast(f.dataset.b==="akkoord"?"Akkoord verstuurd, rit aangemaakt":"Mail verstuurd");closeSheet();await reloadData();await loadJarvis()}
+  catch(e){toast(e.message);btn.disabled=false;btn.textContent="Versturen"}};
+
+/* ---------- Jarvis-muisje: laat zien wat Jarvis nu doet ---------- */
+const jcurOn=()=>{try{return localStorage.getItem("ghotra_jcur")!=="0"}catch(e){return true}};
+const JQ=[];let jBusy=false,jHide=null;
+function jEl(){let c=$("#jcur");if(!c){c=document.createElement("div");c.id="jcur";c.setAttribute("aria-live","polite");c.innerHTML='<svg viewBox="0 0 24 24" width="26" height="26"><path d="M3 2l7.5 19 2.6-7.6L21 10.8z" fill="var(--accent)" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="jb"><b>🤖 Jarvis</b><span class="jt2"></span></span>';document.body.appendChild(c);
+    const r=$("#aiBtn")?$("#aiBtn").getBoundingClientRect():{left:20,top:innerHeight-80};c.style.left=r.left+"px";c.style.top=r.top+"px"}return c}
+function navEl(v){const sub=SUBVIEWS[v]&&v!=="kaart"?"meer":v;return [...document.querySelectorAll(`#rail a[href="#${sub}"],#tabbar a[href="#${sub}"]`)].find(e=>e.offsetParent)}
+function jTarget(t){t=t||{};const vis=e=>e&&e.offsetParent&&(()=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})();
+  if(t.key){const e=document.querySelector(`[data-act="thread"][data-id="${CSS.escape(t.key)}"]`);if(vis(e))return e;return navEl("mail")}
+  if(t.col==="orders"&&t.id){const e=document.querySelector(`[data-act="order"][data-id="${CSS.escape(t.id)}"]`);if(vis(e))return e;return navEl("ritten")}
+  if(t.col==="invoices"&&t.id){const e=document.querySelector(`[data-act="review"][data-id="${CSS.escape(t.id)}"],[data-act="invoice"][data-id="${CSS.escape(t.id)}"]`);if(vis(e))return e;return navEl("facturen")}
+  if(t.col==="customers")return navEl("meer");
+  if(t.view==="jarvis"){const e=document.querySelector(".jcard")||document.querySelector(".jrow.open");if(vis(e))return e;return navEl("jarvis")}
+  if(t.view)return navEl(t.view)||null;return null}
+function jarvisAct(m){if(!jcurOn()||document.hidden)return;if(m.quiet){if(!jBusy){const c=jEl();c.classList.add("on","quiet");c.querySelector(".jt2").textContent=m.text;clearTimeout(jHide);jHide=setTimeout(()=>c.classList.remove("on","quiet"),2500)}return}
+  JQ.push(m);if(JQ.length>6)JQ.splice(0,JQ.length-6);if(!jBusy)jNext()}
+function jNext(){const m=JQ.shift();if(!m){jBusy=false;clearTimeout(jHide);jHide=setTimeout(()=>{const c=$("#jcur");if(c)c.classList.remove("on")},3500);return}
+  jBusy=true;clearTimeout(jHide);const c=jEl();c.classList.remove("quiet");c.classList.add("on");c.querySelector(".jt2").textContent=m.text;
+  const el=jTarget(m.target);if(el){const r=el.getBoundingClientRect(),x=Math.min(innerWidth-40,Math.max(8,r.left+Math.min(r.width*0.5,140))),y=Math.min(innerHeight-110,Math.max(8,r.top+r.height*0.55));c.style.left=x+"px";c.style.top=y+"px";c.classList.toggle("flip",x>innerWidth-300);
+    setTimeout(()=>{el.classList.add("jhit");setTimeout(()=>el.classList.remove("jhit"),1600)},700)}
+  setTimeout(jNext,m.text.length>90?3600:2600)}
 /* ---------- boot ---------- */
 (async function boot(){
   const h=location.hash.slice(1);if(h&&(NAV.some(n=>n[0]===h)||SUBVIEWS[h]))S.view=h;

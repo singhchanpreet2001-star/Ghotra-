@@ -16,9 +16,13 @@ const mail = load("mail");
 const ai = load("ai");
 const push = load("push");
 const here = load("here");
-const pdf = load("pdf");
-const ubl = load("ubl");
-const createJarvis = load("jarvis");
+// Jarvis en zijn hulpbestanden zijn optioneel: ontbreekt er één, dan draait de app gewoon verder zonder Jarvis.
+function tryLoad(name) { try { return load(name); } catch (e) { console.error(`LET OP: ${name}.js ontbreekt of bevat een fout (${e.message}). De app draait verder zonder Jarvis.`); return null; } }
+const pdf = tryLoad("pdf");
+const ubl = tryLoad("ubl");
+const createJarvis = tryLoad("jarvis");
+process.on("unhandledRejection", e => console.error("Onverwachte fout (app draait verder):", e && e.stack || e));
+process.on("uncaughtException", e => console.error("Onverwachte fout (app draait verder):", e && e.stack || e));
 
 const PORT = +process.env.PORT || 3000;
 const PUB = path.join(__dirname, "public");
@@ -439,7 +443,7 @@ Beantwoord vragen over ritten, chauffeurs, afwezigheden, voertuigen, klanten, fa
 Je heet Jarvis. Je kunt op uitdrukkelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; vraag bij twijfel eerst kort om bevestiging en zeg daarna wat je gedaan hebt. Andere wijzigingen of mails doe je niet: zeg dan welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
   const msgs = (b.messages || []).filter(m => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-14);
   if (!msgs.length || msgs[msgs.length - 1].role !== "user") throw httpErr(400, "Geen vraag");
-  try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis.tools(u)) }) }); } catch (e) { aiErr(e); }
+  try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis ? jarvis.tools(u) : []) }) }); } catch (e) { aiErr(e); }
 });
 
 // --- routes en posities ---
@@ -539,17 +543,23 @@ on("POST", "/api/driver/ziek", async (req, res, u) => {
 });
 
 // --- Jarvis (automatische piloot) ---
+const needJarvis = () => { if (!jarvis) throw httpErr(503, "Jarvis is niet geïnstalleerd: upload jarvis.js, pdf.js en ubl.js naast server.js."); };
 on("GET", "/api/jarvis", (req, res, u) => {
-  need(u, "office");
+  need(u, "office"); needJarvis();
   const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at));
   send(res, 200, { config: jarvis.cfg(), items: all.slice(0, 300), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
 });
+on("POST", "/api/jarvis/item/:id/offer", async (req, res, u, p) => {
+  need(u, "office"); needJarvis(); const b = await jsonBody(req);
+  try { send(res, 200, await jarvis.offer(p.id, b, u)); } catch (e) { throw httpErr(e.status || 502, e.message); }
+});
 on("POST", "/api/jarvis/item/:id/:action", async (req, res, u, p) => {
-  need(u, "office"); if (!["doe", "klaar"].includes(p.action)) throw httpErr(400, "Onbekende actie");
+  need(u, "office"); needJarvis(); if (!["doe", "klaar"].includes(p.action)) throw httpErr(400, "Onbekende actie");
   try { send(res, 200, await jarvis.resolve(p.id, p.action, u)); } catch (e) { throw httpErr(e.status || 500, e.message); }
 });
-on("POST", "/api/jarvis/update", async (req, res, u) => { need(u, "office"); send(res, 200, { text: await jarvis.update(true) }); });
-on("POST", "/api/jarvis/run", async (req, res, u) => { need(u, "office"); await jarvis.tick("hand"); send(res, 200, { ok: true }); });
+on("POST", "/api/jarvis/catchup", async (req, res, u) => { need(u, "office"); needJarvis(); try { send(res, 200, await jarvis.catchup()); } catch (e) { throw httpErr(e.status || 502, e.message); } });
+on("POST", "/api/jarvis/update", async (req, res, u) => { need(u, "office"); needJarvis(); send(res, 200, { text: await jarvis.update(true) }); });
+on("POST", "/api/jarvis/run", async (req, res, u) => { need(u, "office"); needJarvis(); await jarvis.tick("hand"); send(res, 200, { ok: true }); });
 
 // --- pushmeldingen ---
 on("GET", "/api/push/key", (req, res, u) => { need(u); send(res, 200, { key: push.keys().pub }); });
@@ -596,7 +606,7 @@ async function pollMail() {
     store.setting("mailPoll", { user: mail.config().user, last: r.last, validity: r.validity });
     const me = mail.config().user.toLowerCase();
     const fresh = reset ? [] : r.items.filter(m => m.from !== me);
-    if (fresh.length && jarvis) jarvis.onNewMail(fresh);
+    if (!reset && r.items.length && jarvis) jarvis.onNewMail(r.items); // ook mails die je naar jezelf stuurt (bv. doorgestuurde orders)
     if (fresh.length) {
       emitOffice({ type: "mail", items: fresh.map(m => ({ ...m, box: "inbox" })) });
       const m = fresh[0];
@@ -611,6 +621,7 @@ async function pollMail() {
 function schedule(ms) { clearTimeout(mailTimer); mailTimer = setTimeout(pollMail, ms); }
 schedule(15000);
 
-const jarvis = createJarvis({ store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ });
+let jarvis = null;
+try { if (createJarvis && pdf && ubl) jarvis = createJarvis({ store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ }); } catch (e) { console.error("Jarvis kon niet starten:", e.message); }
 
 server.listen(PORT, () => console.log(`Ghotra draait op poort ${PORT} · gegevens in ${store.DATA_DIR}`));

@@ -61,10 +61,11 @@ ${sender ? "Afzender van de mail: " + sender + "\n" : ""}${subject ? "Onderwerp:
 // Elke binnenkomende mail sorteren: is het een ritorder, is het dringend?
 async function triageMail({ from, fromName, subject, text, attachments, company, today, klanten }) {
   const prompt = `Je bent de dispatcher van transportbedrijf ${company}. Sorteer deze binnenkomende mail. Vandaag is ${today}.
-Antwoord met alleen JSON: {"soort":"ritorder"|"ritwijziging"|"vraag"|"factuur"|"administratie"|"reclame"|"anders","dringend":boolean,"annulering":boolean,"reden":string,"samenvatting":string,"ref":string}
-- "ritorder": een nieuwe transportopdracht of boeking voor ons (in een PDF-bijlage of in de mailtekst zelf). Geen offerte-aanvraag zonder bevestiging.
+Antwoord met alleen JSON: {"soort":"ritorder"|"ritwijziging"|"prijsvraag"|"vraag"|"factuur"|"administratie"|"reclame"|"anders","dringend":boolean,"annulering":boolean,"reden":string,"samenvatting":string,"ref":string}
+- "ritorder": een vaste, bevestigde transportopdracht of boeking voor ons (in een PDF-bijlage of in de mailtekst zelf), met een afgesproken prijs of zonder vraag over de prijs.
+- "prijsvraag": de klant vraagt wat wij vragen voor een transport (offerte-aanvraag), of stelt zelf een prijs voor en vraagt of wij akkoord gaan, of onderhandelt over de prijs. Elke mail waarin ons akkoord op een prijs gevraagd wordt is een prijsvraag, ook met een vrachtorder in bijlage.
 - "ritwijziging": een wijziging, annulering of uitstel van een bestaande rit; zet in "ref" de ritreferentie (onze R-… of die van de klant) als die vermeld staat. annulering = true alleen als de rit helemaal niet meer doorgaat.
-- "vraag": vraag of offerte-aanvraag van een (mogelijke) klant, of vraag van een chauffeur.
+- "vraag": andere vraag van een klant of chauffeur (geen prijsvraag).
 - "factuur": factuur, creditnota, betaling of aanmaning (van of aan ons).
 - "administratie": overheid, verzekering, bank, leasing, leverancier, boekhouder.
 - "reclame": nieuwsbrief, marketing, automatische meldingen zonder actie.
@@ -77,7 +78,7 @@ Bijlagen: ${(attachments || []).join(", ") || "geen"}
 Tekst:
 ${String(text || "").slice(0, 4000)}`;
   const r = jsonOf(textOf(await call({ messages: [{ role: "user", content: prompt }], maxTokens: 400 })));
-  const S = ["ritorder", "ritwijziging", "vraag", "factuur", "administratie", "reclame", "anders"];
+  const S = ["ritorder", "ritwijziging", "prijsvraag", "vraag", "factuur", "administratie", "reclame", "anders"];
   return { soort: S.includes(r.soort) ? r.soort : "anders", dringend: !!r.dringend && r.soort !== "reclame", annulering: r.soort === "ritwijziging" && !!r.annulering, reden: String(r.reden || ""), samenvatting: String(r.samenvatting || ""), ref: String(r.ref || "") };
 }
 
