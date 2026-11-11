@@ -804,8 +804,8 @@ function shRoute(sh){const o=byId("orders",sh.id)||{};const t=`Route <span class
   if(!d.configured)return sheetWrap(t,`<div class="notice"><b>Vrachtwagenroutes zijn nog niet ingesteld</b>Met een HERE-sleutel (Beheer → Koppelingen) berekent de app routes met hoogte, breedte, gewicht, ADR en wegenwerken. Intussen kun je Google Maps gebruiken; dat is een autoroute.</div>${gLinks(o)}`);
   const r=d.route;
   return sheetWrap(t,`${r?`<div class="rsum"><b>${(r.length/1000).toFixed(0)} km</b><b>${fdur(r.duration)}</b>${r.trafficDelay>120?`<span class="pill s-laden">+${fdur(r.trafficDelay)} verkeer</span>`:""}<span class="muted">${esc([d.vehicle.hoogte?"h "+d.vehicle.hoogte+" m":"",d.vehicle.breedte?"b "+d.vehicle.breedte+" m":"",d.vehicle.lengte?"l "+d.vehicle.lengte+" m":"",d.vehicle.massa?d.vehicle.massa+" t":""].filter(Boolean).join(" · ")||"Geen voertuigmaten ingevuld: route zonder vrachtwagenbeperkingen")}</span></div>`:""}
-   ${r&&r.notices.length?`<div class="notice warn"><b>Let op</b>${r.notices.map(n=>esc(n.title)).join("<br>")}</div>`:""}
-   <div id="map" class="map"></div>
+   ${r&&(r.notices.length||(r.incidents||[]).length)?`<div class="notice warn"><b>Let op op deze route</b>${[...(r.incidents||[]).map(i=>i.text),...r.notices.map(n=>n.title)].slice(0,8).map(esc).join("<br>")}</div>`:""}
+   <div id="map" class="map"></div><div class="muted" style="font-size:12px">Gekleurde lijnen op de kaart = live verkeer (groen vlot, oranje traag, rood file). De route houdt rekening met file en afgesloten wegen op het moment van berekenen.</div>
    ${r?`<section class="sec"><span class="lbl">Instructies</span><div class="steps">${r.steps.slice(0,80).map(s=>`<div><span>${esc(s.text)}</span><small>${s.length>=1000?(s.length/1000).toFixed(1)+" km":s.length+" m"}</small></div>`).join("")}</div></section>`:""}
    ${gLinks(o)}`)}
 let routeMap=null,truckMarker=null;
@@ -814,7 +814,7 @@ async function drawRoute(){const sh=S.sheet;if(!sh||sh.type!=="route"||sh.state!
   try{const L=await loadLeaflet();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(my!==routeDraw||S.sheet!==sh)return;
     const el=$("#panel #map");if(!el)return;if(routeMap){try{routeMap.remove()}catch(e){}routeMap=null}truckMarker=null;if(el._leaflet_id)el._leaflet_id=null;
     routeMap=L.map(el,{zoomControl:true,attributionControl:true});
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(routeMap);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(routeMap);if(S.status&&S.status.here)L.tileLayer("/api/traffic/{z}/{x}/{y}?t="+Date.now(),{maxZoom:19,minZoom:5,opacity:.9,attribution:"verkeer HERE"}).addTo(routeMap);
     const pts=d.route?d.route.coords:[[d.laad.lat,d.laad.lng],[d.los.lat,d.los.lng]];
     const line=L.polyline(pts,{color:getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()||"#0d9466",weight:5,opacity:.9}).addTo(routeMap);
     L.circleMarker([d.laad.lat,d.laad.lng],{radius:9,color:"#fff",weight:3,fillColor:"#a96608",fillOpacity:1}).addTo(routeMap).bindTooltip("Laden: "+d.laad.label);
@@ -1081,7 +1081,7 @@ function truckIcon(L,r){const c=!r.p?"#9aa49e":posCls(r.p)==="live"?(r.o?"#7c4dc
 async function drawFleet(){const el=$("#fleetMap");if(!el)return;let L;try{L=await loadLeaflet()}catch(e){el.outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
   if(fleetMap&&fleetMap.getContainer()!==el){fleetMap.remove();fleetMap=null;fleetMarkers={};fleetTrail=null}
   const first=!fleetMap;
-  if(first){fleetMap=L.map(el);L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(fleetMap);fleetMap.setView([50.85,4.35],8)}
+  if(first){fleetMap=L.map(el);L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(fleetMap);if(S.status&&S.status.here){fleetMap._traffic=L.tileLayer("/api/traffic/{z}/{x}/{y}?t="+Date.now(),{maxZoom:19,minZoom:5,opacity:.9,attribution:"verkeer HERE"}).addTo(fleetMap);const fm=fleetMap,iv=setInterval(()=>{if(fleetMap!==fm)return clearInterval(iv);fm._traffic.setUrl("/api/traffic/{z}/{x}/{y}?t="+Date.now())},120000)}fleetMap.setView([50.85,4.35],8)}
   const rows=fleetRows().filter(r=>r.p),seen=new Set();
   rows.forEach(r=>{seen.add(r.d.id);const ll=[r.p.lat,r.p.lng];const tip=`${r.d.naam}${r.v?" · "+r.v.kenteken:""}<br>${r.o?r.o.ref+" · "+r.o.status:"Geen actieve rit"}<br>${ago(r.p.at)}`;
     if(fleetMarkers[r.d.id])fleetMarkers[r.d.id].setLatLng(ll).setIcon(truckIcon(L,r)).setTooltipContent(tip);
