@@ -33,7 +33,7 @@ async function geocode(q) {
 
 // vehicle: {hoogte (m), breedte (m), lengte (m), massa (ton)}, adr: boolean
 async function truckRoute(from, to, vehicle = {}, adr = false) {
-  const p = new URLSearchParams({ transportMode: "truck", origin: `${from.lat},${from.lng}`, destination: `${to.lat},${to.lng}`, return: "polyline,summary,actions,instructions", lang: "nl-BE", departureTime: "now", apiKey: config().key });
+  const p = new URLSearchParams({ transportMode: "truck", origin: `${from.lat},${from.lng}`, destination: `${to.lat},${to.lng}`, return: "polyline,summary,actions,instructions", lang: "nl-BE", apiKey: config().key });
   const cm = v => Math.round(+v * 100);
   if (+vehicle.hoogte) p.set("vehicle[height]", cm(vehicle.hoogte));
   if (+vehicle.breedte) p.set("vehicle[width]", cm(vehicle.breedte));
@@ -43,8 +43,9 @@ async function truckRoute(from, to, vehicle = {}, adr = false) {
   const r = await fetch("https://router.hereapi.com/v8/routes?" + p.toString(), { signal: AbortSignal.timeout(20000) });
   if (r.status === 401 || r.status === 403) throw Object.assign(new Error("De HERE-sleutel is ongeldig."), { code: "auth" });
   const j = await r.json().catch(() => ({}));
+  if (!r.ok) { console.warn("HERE route", r.status, JSON.stringify(j).slice(0, 500)); throw Object.assign(new Error(`HERE kon de route niet berekenen (${r.status}): ${[j.title, j.cause].filter(Boolean).join(" – ") || "onbekende fout"}`), { code: "here_" + r.status }); }
   const route = (j.routes || [])[0];
-  if (!route) throw Object.assign(new Error((j.notices && j.notices[0] && j.notices[0].title) || "Geen route gevonden"), { code: "no_route" });
+  if (!route) { console.warn("HERE geen route", JSON.stringify(j).slice(0, 500)); throw Object.assign(new Error("Geen vrachtwagenroute gevonden" + (j.notices && j.notices.length ? ": " + j.notices.map(n => n.title || n.code).join("; ") : ". Controleer de adressen en de voertuigmaten.")), { code: "no_route" }); }
   let coords = [], length = 0, duration = 0, base = 0; const steps = [], notices = [];
   for (const s of route.sections) {
     const pts = decodePolyline(s.polyline); const offset = coords.length;
