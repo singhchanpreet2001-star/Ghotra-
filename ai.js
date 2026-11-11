@@ -38,13 +38,14 @@ function fileBlock(buf, type) {
   return { type: "image", source: { type: "base64", media_type: mt, data } };
 }
 
-const ORDER_SCHEMA = `{"klantNaam":string,"klantEmail":string,"klantBtw":string,"klantAdres":string,"referentieKlant":string,"laadplaats":string,"laadadres":string,"laaddatum":string,"losplaats":string,"losadres":string,"losdatum":string,"goederen":string,"colli":number|null,"gewicht":number|null,"adr":boolean,"prijs":number|null,"wachtTarief":number|null,"vrijeUren":number|null,"notities":string}`;
+const ORDER_SCHEMA = `{"isOpdracht":boolean,"klantNaam":string,"klantEmail":string,"klantBtw":string,"klantAdres":string,"referentieKlant":string,"laadplaats":string,"laadadres":string,"laaddatum":string,"losplaats":string,"losadres":string,"losdatum":string,"goederen":string,"colli":number|null,"gewicht":number|null,"adr":boolean,"prijs":number|null,"wachtTarief":number|null,"vrijeUren":number|null,"notities":string}`;
 
 async function orderFromFile({ buf, type, name, company, today, sender, subject, body }) {
   const prompt = `Je leest een transportopdracht (vrachtorder) die bij transportbedrijf ${company} binnenkwam. Haal de ritgegevens eruit.
 Antwoord met alleen JSON volgens dit schema, zonder andere tekst:
 ${ORDER_SCHEMA}
 Regels:
+- isOpdracht = true alleen als dit document echt een transportopdracht/vrachtorder of boekingsbevestiging voor een rit is. Bij een factuur, CMR, offerte-aanvraag, nieuwsbrief, prijslijst of ander document: false.
 - klant = de opdrachtgever die de vracht bestelt en betaalt, niet de laad- of losplaats en niet ${company} zelf.
 - laadplaats/losplaats kort als "Stad, landcode" (bv. "Antwerpen, BE"); laadadres/losadres volledig met bedrijfsnaam, straat, postcode en plaats.
 - datums als YYYY-MM-DDTHH:MM in lokale tijd; is alleen een dag bekend, gebruik 08:00 voor laden en 17:00 voor lossen. Onbekend: "". Vandaag is ${today}.
@@ -53,8 +54,31 @@ Regels:
 - wachtTarief = vergoeding per uur wachttijd/standgeld als die vermeld staat; vrijeUren = gratis laad- of lostijd in uren als vermeld (bv. "2 uur vrij"). Onbekend: null.
 - notities: tijdvensters, laad-/losreferenties, bijzondere instructies (kort).
 ${sender ? "Afzender van de mail: " + sender + "\n" : ""}${subject ? "Onderwerp: " + subject + "\n" : ""}${body ? "Mailtekst:\n" + String(body).slice(0, 3000) + "\n" : ""}Bestand: ${name}`;
-  const j = await call({ messages: [{ role: "user", content: [fileBlock(buf, type), { type: "text", text: prompt }] }], maxTokens: 1500 });
+  const j = await call({ messages: [{ role: "user", content: buf ? [fileBlock(buf, type), { type: "text", text: prompt }] : [{ type: "text", text: prompt }] }], maxTokens: 1500 });
   return jsonOf(textOf(j));
+}
+
+// Elke binnenkomende mail sorteren: is het een ritorder, is het dringend?
+async function triageMail({ from, fromName, subject, text, attachments, company, today, klanten }) {
+  const prompt = `Je bent de dispatcher van transportbedrijf ${company}. Sorteer deze binnenkomende mail. Vandaag is ${today}.
+Antwoord met alleen JSON: {"soort":"ritorder"|"ritwijziging"|"vraag"|"factuur"|"administratie"|"reclame"|"anders","dringend":boolean,"annulering":boolean,"reden":string,"samenvatting":string,"ref":string}
+- "ritorder": een nieuwe transportopdracht of boeking voor ons (in een PDF-bijlage of in de mailtekst zelf). Geen offerte-aanvraag zonder bevestiging.
+- "ritwijziging": een wijziging, annulering of uitstel van een bestaande rit; zet in "ref" de ritreferentie (onze R-… of die van de klant) als die vermeld staat. annulering = true alleen als de rit helemaal niet meer doorgaat.
+- "vraag": vraag of offerte-aanvraag van een (mogelijke) klant, of vraag van een chauffeur.
+- "factuur": factuur, creditnota, betaling of aanmaning (van of aan ons).
+- "administratie": overheid, verzekering, bank, leasing, leverancier, boekhouder.
+- "reclame": nieuwsbrief, marketing, automatische meldingen zonder actie.
+- dringend = true alleen als er vandaag of morgen actie nodig is: spoedrit, wijziging of annulering van een rit voor vandaag/morgen, klacht, schade, ongeval, chauffeur in nood, douane/politie/blokkade, laatste aanmaning, deadline vandaag. Reclame en gewone facturen zijn nooit dringend.
+- reden: waarom dringend (kort, leeg als niet dringend). samenvatting: één korte Nederlandse zin.
+Bekende klanten: ${(klanten || []).slice(0, 80).join(", ") || "(nog geen)"}
+Van: ${fromName || ""} <${from || ""}>
+Onderwerp: ${subject || ""}
+Bijlagen: ${(attachments || []).join(", ") || "geen"}
+Tekst:
+${String(text || "").slice(0, 4000)}`;
+  const r = jsonOf(textOf(await call({ messages: [{ role: "user", content: prompt }], maxTokens: 400 })));
+  const S = ["ritorder", "ritwijziging", "vraag", "factuur", "administratie", "reclame", "anders"];
+  return { soort: S.includes(r.soort) ? r.soort : "anders", dringend: !!r.dringend && r.soort !== "reclame", annulering: r.soort === "ritwijziging" && !!r.annulering, reden: String(r.reden || ""), samenvatting: String(r.samenvatting || ""), ref: String(r.ref || "") };
 }
 
 async function checkCmr({ buf, type, order }) {
@@ -91,4 +115,7 @@ async function chat({ system, messages, tools }) {
   return "Dat duurde te lang. Stel je vraag iets specifieker.";
 }
 
-module.exports = { config, configured, orderFromFile, checkCmr, chat };
+// Korte tekst schrijven zonder tools (voor de updates van Jarvis).
+async function write({ system, prompt, maxTokens = 600 }) { return textOf(await call({ system, messages: [{ role: "user", content: prompt }], maxTokens })); }
+
+module.exports = { config, configured, orderFromFile, triageMail, checkCmr, chat, write };

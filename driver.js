@@ -142,15 +142,16 @@ async function openRoute(o){
   const L=window.L;if(el._leaflet_id)el._leaflet_id=null;
   map=L.map(el,{zoomControl:false,attributionControl:false,touchZoom:"center",scrollWheelZoom:"center",doubleClickZoom:"center",zoomSnap:0.5});
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
-  trafficLayer=L.tileLayer("/api/traffic/{z}/{x}/{y}?t="+Date.now(),{maxZoom:19,minZoom:5,opacity:.9}).addTo(map);
+  trafficLayer=L.tileLayer("/api/traffic/{z}/{x}/{y}?t="+Date.now(),{maxZoom:19,minZoom:5,opacity:.9});
   map.on("dragstart",()=>{if(follow)setNavMode(false)});
   setRoute(d);
   meMarker=L.marker([0,0],{icon:L.divIcon({className:"",iconSize:[0,0],html:'<div class="arw" style="transform:translate(-50%,-50%)"><svg viewBox="0 0 40 40" width="44" height="44"><circle cx="20" cy="20" r="18" fill="rgba(13,148,102,.18)"/><path d="M20 5 L32 33 L20 26 L8 33 Z" fill="#0d9466" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/></svg></div>'}),interactive:false,zIndexOffset:1000});
   layoutMap();map.setView(pos?[pos.lat,pos.lng]:(d.start?[d.start.lat,d.start.lng]:[d.end.lat,d.end.lng]),17,{animate:false});
   if(!S.lastPos&&pos)S.lastPos=pos;setNavMode(!!S.lastPos);
   window.addEventListener("resize",layoutMap);
-  NAV.timers.push(setInterval(()=>{if(trafficLayer)trafficLayer.setUrl("/api/traffic/{z}/{x}/{y}?t="+Date.now())},120000));
-  NAV.timers.push(setInterval(()=>recalc(true),300000))}
+  // Verkeerskleuren alleen in Overzicht (spaart HERE-verbruik); de route zelf rekent altijd met live verkeer.
+  NAV.timers.push(setInterval(()=>{if(trafficLayer&&!follow)trafficLayer.setUrl("/api/traffic/{z}/{x}/{y}?t="+Date.now())},600000));
+  NAV.timers.push(setInterval(()=>{if((S.lastPos&&S.lastPos.speed||0)>3)recalc(true)},900000))}
 function setRoute(d){routeData=d;const r=d.route,L=window.L;const cum=[0];
   if(r)for(let i=1;i<r.coords.length;i++)cum.push(cum[i-1]+dist(r.coords[i-1],r.coords[i]));NAV.cum=cum;NAV.idx=0;NAV.off=0;
   const pts=r?r.coords:[[d.end.lat,d.end.lng]];
@@ -167,7 +168,7 @@ function layoutMap(){const w=$("#navwrap"),el=$("#dmap");if(!w||!el||!map)return
   if(follow){const D=Math.ceil(2*Math.hypot(W/2,H*0.72))+40;Object.assign(el.style,{width:D+"px",height:D+"px",left:(W/2-D/2)+"px",top:(H*0.72-D/2)+"px",transform:`rotate(${-NAV.rot}deg)`})}
   else Object.assign(el.style,{width:W+"px",height:H+"px",left:"0px",top:"0px",transform:"none"});
   map.invalidateSize({pan:false})}
-function setNavMode(on){follow=on;const b=$("#navBtn");if(b)b.textContent=on?"Overzicht":"▲ Navigeren";if(!map)return;
+function setNavMode(on){follow=on;const b=$("#navBtn");if(b)b.textContent=on?"Overzicht":"▲ Navigeren";if(!map)return;if(trafficLayer){if(on&&trafficLayer._map)trafficLayer.remove();else if(!on&&!trafficLayer._map)trafficLayer.addTo(map)}
   if(on){map.dragging.disable();layoutMap();if(S.lastPos){map.setView([S.lastPos.lat,S.lastPos.lng],Math.max(map.getZoom(),16),{animate:false});onPos(S.lastPos)}}
   else{map.dragging.enable();layoutMap();const r=routeData&&routeData.route;if(r&&routeLine){const rest=r.coords.slice(NAV.idx);map.fitBounds(window.L.latLngBounds(rest.length>1?rest:r.coords),{padding:[40,40]})}}}
 function nearest(ll){const c=routeData&&routeData.route&&routeData.route.coords;if(!c||!c.length)return{i:0,d:Infinity};let bi=NAV.idx,bd=Infinity;

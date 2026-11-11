@@ -77,7 +77,7 @@ async function test() {
 const tileCache = new Map();
 async function trafficTile(z, x, y) {
   const k = `${z}/${x}/${y}`, c = tileCache.get(k);
-  if (c && Date.now() - c.t < 120000) return c.buf;
+  if (c && Date.now() - c.t < 300000) return c.buf;
   const r = await fetch(`https://traffic.maps.hereapi.com/v3/flow/mc/${z}/${x}/${y}/png?apiKey=${encodeURIComponent(config().key)}`, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw Object.assign(new Error("Verkeerstegel niet beschikbaar"), { status: r.status });
   const buf = Buffer.from(await r.arrayBuffer());

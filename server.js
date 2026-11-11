@@ -16,6 +16,9 @@ const mail = load("mail");
 const ai = load("ai");
 const push = load("push");
 const here = load("here");
+const pdf = load("pdf");
+const ubl = load("ubl");
+const createJarvis = load("jarvis");
 
 const PORT = +process.env.PORT || 3000;
 const PUB = path.join(__dirname, "public");
@@ -150,6 +153,7 @@ async function processCmr(orderId, buf, type, name, byUser, wait) {
     let invoiceId = fresh.factuurId || null;
     if (invoiceId) { const inv = store.get("invoices", invoiceId); if (inv && inv.status === "Concept" && check) emit("invoices", invoiceId, store.patch("invoices", invoiceId, { cmrCheck: check }), inv); }
     else if (fresh.klantId) invoiceId = createConcept(fresh.klantId, [orderId], check);
+    if (jarvis) jarvis.kick();
     return { invoiceId, check };
   })();
   if (wait) return { ...(await job), order: store.get("orders", orderId) };
@@ -271,6 +275,7 @@ on("GET", "/api/data", (req, res, u) => {
   const out = {}; COLS.forEach(c => out[c] = store.all(c));
   out.bedrijf = bedrijf(); out.facturatie = store.get("config", "facturatie") || {}; delete out.config;
   out.positions = db.prepare("SELECT * FROM positions").all();
+  out.mailDringend = store.all("mailinfo").filter(i => i.dringend).length;
   out.status = { storageWarning: store.STORAGE_WARNING || "", mail: mail.configured(), mailGmail: /gmail\.com$/i.test(mail.config().imapHost), mailUser: mail.config().user, ai: ai.configured(), here: here.configured() };
   send(res, 200, out);
 });
@@ -279,6 +284,7 @@ on("PUT", "/api/c/:col/:id", async (req, res, u, p) => {
   const b = await jsonBody(req); const prev = store.get(p.col, p.id);
   const doc = store.put(p.col, p.id, b); emit(p.col, p.id, doc, prev);
   if (p.col === "orders") notifyOrderChange(doc, prev);
+  if (["orders", "absences", "invoices", "config"].includes(p.col) && jarvis) jarvis.kick();
   send(res, 200, doc);
 });
 on("PATCH", "/api/c/:col/:id", async (req, res, u, p) => {
@@ -286,6 +292,7 @@ on("PATCH", "/api/c/:col/:id", async (req, res, u, p) => {
   const b = await jsonBody(req); const prev = store.get(p.col, p.id); if (!prev) throw httpErr(404, "Niet gevonden");
   const doc = store.patch(p.col, p.id, b); emit(p.col, p.id, doc, prev);
   if (p.col === "orders") notifyOrderChange(doc, prev);
+  if (["orders", "absences", "invoices", "config"].includes(p.col) && jarvis) jarvis.kick();
   send(res, 200, doc);
 });
 on("DELETE", "/api/c/:col/:id", (req, res, u, p) => {
@@ -371,7 +378,16 @@ on("POST", "/api/settings/mail/test", async (req, res, u) => { need(u, "admin");
 const mailErr = e => { throw httpErr(e.code === "not_configured" ? 409 : e.code === "not_found" ? 404 : 502, e.message, e.code); };
 on("GET", "/api/mail/list", async (req, res, u) => {
   need(u, "office"); const s = new URL(req.url, "http://x").searchParams;
-  try { send(res, 200, await mail.list({ box: s.get("box") === "sent" ? "sent" : "inbox", q: s.get("q") || "", unread: s.get("unread") === "1", page: +s.get("page") || 0, size: 25 })); } catch (e) { mailErr(e); }
+  const cat = s.get("cat");
+  if (cat) { // categorie van Jarvis: uit de eigen opslag, zonder mailserver
+    const all = store.all("mailinfo").filter(i => cat === "dringend" ? i.dringend : i.soort === cat).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    return send(res, 200, { items: all.slice(0, 100).map(i => ({ uid: i.uid, from: i.from, fromName: i.fromName, subject: i.subject, date: i.date, hasAtt: i.hasAtt, unread: false, info: i })), next: null });
+  }
+  try {
+    const r = await mail.list({ box: s.get("box") === "sent" ? "sent" : "inbox", q: s.get("q") || "", unread: s.get("unread") === "1", page: +s.get("page") || 0, size: 25 });
+    if (s.get("box") !== "sent") r.items = (r.items || []).map(m => ({ ...m, info: store.get("mailinfo", "inbox-" + m.uid) || undefined }));
+    send(res, 200, r);
+  } catch (e) { mailErr(e); }
 });
 on("GET", "/api/mail/msg/:box/:uid", async (req, res, u, p) => { need(u, "office"); try { send(res, 200, await mail.getMessage(p.box === "sent" ? "sent" : "inbox", +p.uid)); } catch (e) { mailErr(e); } });
 on("POST", "/api/mail/attachment", async (req, res, u) => {
@@ -390,6 +406,11 @@ on("POST", "/api/mail/send", async (req, res, u) => {
   }
   if (atts.reduce((s, a) => s + a.bytes.length, 0) > 24 * 1024 * 1024) throw httpErr(400, "De bijlagen samen zijn groter dan 24 MB");
   try { send(res, 200, await mail.send({ to, cc, subject: String(b.subject || ""), text: String(b.body || ""), attachments: atts, inReplyTo: b.inReplyTo || "", references: b.references || "" })); } catch (e) { mailErr(e); }
+});
+on("POST", "/api/mailinfo/:id", async (req, res, u, p) => {
+  need(u, "office"); const b = await jsonBody(req); const prev = store.get("mailinfo", p.id); if (!prev) throw httpErr(404, "Niet gevonden");
+  const d = store.patch("mailinfo", p.id, { dringend: !!b.dringend, ...(b.dringend ? {} : { afgehandeld: new Date().toISOString(), door: u.name || u.email }) });
+  emitOffice({ type: "mailinfo", item: d }); send(res, 200, d);
 });
 on("GET", "/api/mail/unseen", async (req, res, u) => { need(u, "office"); try { send(res, 200, { unseen: await mail.unseenCount() }); } catch (e) { mailErr(e); } });
 
@@ -413,12 +434,12 @@ on("POST", "/api/ai/cmr/:id", async (req, res, u, p) => {
 on("POST", "/api/ai/chat", async (req, res, u) => {
   need(u, "office"); const b = await jsonBody(req);
   const b2 = bedrijf();
-  const system = `Je bent de assistent in Ghotra Dispatch, de planningsapp van transportbedrijf ${b2.naam || "Ghotra Transport"}. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ })}.
+  const system = `Je bent Jarvis, de assistent in Ghotra Dispatch, de planningsapp van transportbedrijf ${b2.naam || "Ghotra Transport"}. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ })}.
 Beantwoord vragen over ritten, chauffeurs, afwezigheden, voertuigen, klanten, facturen, documenten en mail. Gebruik de tools en verzin niets. Antwoord kort en concreet in de taal van de gebruiker (standaard Nederlands), zonder markdown; gewone zinnen of korte opsommingen met streepjes. Bedragen in euro.
-Je kunt zelf niets wijzigen of versturen; zeg welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
+Je heet Jarvis. Je kunt op uitdrukkelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; vraag bij twijfel eerst kort om bevestiging en zeg daarna wat je gedaan hebt. Andere wijzigingen of mails doe je niet: zeg dan welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
   const msgs = (b.messages || []).filter(m => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-14);
   if (!msgs.length || msgs[msgs.length - 1].role !== "user") throw httpErr(400, "Geen vraag");
-  try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools() }) }); } catch (e) { aiErr(e); }
+  try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis.tools(u)) }) }); } catch (e) { aiErr(e); }
 });
 
 // --- routes en posities ---
@@ -512,9 +533,23 @@ on("POST", "/api/driver/ziek", async (req, res, u) => {
   const id = uid(), d = store.get("drivers", u.driverId) || {};
   const doc = store.put("absences", id, { chauffeurId: u.driverId, type: "Ziek", van: today, tot: /^\d{4}-\d{2}-\d{2}$/.test(b.tot || "") ? b.tot : "", notitie: ("Gemeld via chauffeursapp. " + String(b.notitie || "")).trim(), gemeld: new Date().toISOString() });
   emit("absences", id, doc, null);
+  if (jarvis) jarvis.kick();
   push.notifyRole(["admin", "dispatch"], { title: `${d.naam || u.name} meldt zich ziek`, body: "Controleer de planning: ritten van vandaag hebben een andere chauffeur nodig.", url: "/dispatch#planning" });
   send(res, 200, { ok: true });
 });
+
+// --- Jarvis (automatische piloot) ---
+on("GET", "/api/jarvis", (req, res, u) => {
+  need(u, "office");
+  const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at));
+  send(res, 200, { config: jarvis.cfg(), items: all.slice(0, 300), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
+});
+on("POST", "/api/jarvis/item/:id/:action", async (req, res, u, p) => {
+  need(u, "office"); if (!["doe", "klaar"].includes(p.action)) throw httpErr(400, "Onbekende actie");
+  try { send(res, 200, await jarvis.resolve(p.id, p.action, u)); } catch (e) { throw httpErr(e.status || 500, e.message); }
+});
+on("POST", "/api/jarvis/update", async (req, res, u) => { need(u, "office"); send(res, 200, { text: await jarvis.update(true) }); });
+on("POST", "/api/jarvis/run", async (req, res, u) => { need(u, "office"); await jarvis.tick("hand"); send(res, 200, { ok: true }); });
 
 // --- pushmeldingen ---
 on("GET", "/api/push/key", (req, res, u) => { need(u); send(res, 200, { key: push.keys().pub }); });
@@ -561,6 +596,7 @@ async function pollMail() {
     store.setting("mailPoll", { user: mail.config().user, last: r.last, validity: r.validity });
     const me = mail.config().user.toLowerCase();
     const fresh = reset ? [] : r.items.filter(m => m.from !== me);
+    if (fresh.length && jarvis) jarvis.onNewMail(fresh);
     if (fresh.length) {
       emitOffice({ type: "mail", items: fresh.map(m => ({ ...m, box: "inbox" })) });
       const m = fresh[0];
@@ -574,5 +610,7 @@ async function pollMail() {
 }
 function schedule(ms) { clearTimeout(mailTimer); mailTimer = setTimeout(pollMail, ms); }
 schedule(15000);
+
+const jarvis = createJarvis({ store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ });
 
 server.listen(PORT, () => console.log(`Ghotra draait op poort ${PORT} · gegevens in ${store.DATA_DIR}`));
