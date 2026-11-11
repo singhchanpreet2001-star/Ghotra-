@@ -1157,7 +1157,7 @@ function startEvents(){let had=false;const es=new EventSource("/api/events");
     if(m.type==="mailinfo"&&m.item){const t=S.mail.threads.find(x=>x.box==="inbox"&&+x.uid===+m.item.uid);if(t)t.info=m.item;S.status=S.status||{};if(m.item.dringend&&!m.item.afgehandeld&&!(S._seenDr||(S._seenDr=new Set())).has(m.item.id)){S._seenDr.add(m.item.id);S.status.mailDringend=(S.status.mailDringend||0)+1;toast("🔴 Dringende mail: "+(m.item.samenvatting||m.item.subject))}
       if(m.item.afgehandeld&&!m.item.dringend)S.status.mailDringend=Math.max(0,(S.status.mailDringend||1)-1);
       if(S.view==="mail")render();if(S.sheet&&S.sheet.type==="thread")renderSheet();return}
-    if(m.type==="jarvis"&&m.item){if(S.jarvis&&S.jarvis.items){const i=S.jarvis.items.findIndex(x=>x.id===m.item.id);if(i>=0)S.jarvis.items[i]=m.item;else S.jarvis.items.unshift(m.item)}
+    if(m.type==="jarvis"&&m.item){if(S.jarvis&&S.jarvis.items){const i=S.jarvis.items.findIndex(x=>x.id===m.item.id);if(i>=0)S.jarvis.items[i]=m.item;else{S.jarvis.items.unshift(m.item);(S._jNew=S._jNew||new Set()).add(m.item.id);setTimeout(()=>{S._jNew.delete(m.item.id)},4000)}}
       if(!jcurOn()||document.hidden){if(m.item.open&&!m.item.klaar)toast("Jarvis: "+m.item.tekst.slice(0,90));else if(m.item.soort==="update")toast("Nieuwe update van Jarvis")}
       if(["jarvis","vandaag","meer"].includes(S.view))render();return}
     if(m.type==="mail"){const items=m.items||[];if(!items.length)return;
@@ -1173,12 +1173,13 @@ const JICON={prijs:"💶",rit:"📥",klant:"🏢",toewijzing:"🚛",ziek:"🤒",
 async function loadJarvis(){try{const d=await api("/api/jarvis");S.jarvis={...d,state:"ok"}}catch(e){S.jarvis={state:"err",err:e.message,items:[],config:{}}}if(["jarvis","vandaag"].includes(S.view))render()}
 const jOpen=()=>((S.jarvis||{}).items||[]).filter(j=>j.open&&!j.klaar);
 function jarvisCard(){const J=S.jarvis;if(!J||J.state!=="ok")return"";const c=J.config||{},open=jOpen(),items=J.items||[],up=items.find(j=>j.soort==="update");
-  const recent=items.filter(j=>j.soort!=="update"&&!(j.open&&!j.klaar)).slice(0,5);const more=S.jShowAll?open:open.slice(0,4);
+  const recent=items.filter(j=>j.soort!=="update"&&!(j.open&&!j.klaar)).slice(0,8);const more=S.jShowAll?open:open.slice(0,4);
   if(!c.aan)return `<section class="sec"><div class="sec-h"><h2>🤖 Jarvis</h2><button class="btn sm" data-act="nav" data-v="jarvis">Instellen</button></div><div class="notice">Jarvis staat uit. Zet hem aan om mails, planning en facturen te laten opvolgen.</div></section>`;
   return `<section class="sec jvd"><div class="sec-h"><h2>🤖 Jarvis <small class="muted" style="font-weight:500;font-size:12.5px">${c.proef?"proefmodus":"automatisch"}</small></h2><button class="btn sm" data-act="nav" data-v="jarvis">Logboek en instellingen</button></div>
    ${open.length?`<div class="lbl" style="margin:2px 0 6px">Voor jou (${open.length})</div><div class="jlist">${more.map(jItem).join("")}</div>${open.length>4?`<button class="linkbtn" data-act="jall">${S.jShowAll?"Minder tonen":"Toon alle "+open.length+" vragen"}</button>`:""}`:`<div class="notice ok"><b>Niets voor jou</b>Jarvis leest je mail, plant en volgt alles op. Je krijgt hier een update om de ${c.updateUren||2} uur.</div>`}
-   ${up?`<div class="jupd" style="margin-top:10px"><div class="t2 muted">${esc(up.titel||"Update")} · ${ftime(up.at)}</div><div class="jtext">${esc(up.tekst)}</div></div>`:""}
-   ${recent.length?`<details class="jrecent"><summary>Wat Jarvis net deed</summary><div class="jlist">${recent.map(jItem).join("")}</div></details>`:""}</section>`}
+   <div class="lbl" style="margin:14px 0 6px">Live: wat Jarvis doet</div>
+   <div class="jfeed">${recent.length?recent.map(j=>{const r=j.ref||{},act=r.col==="orders"?`data-act="order" data-id="${r.id}"`:r.col==="invoices"?`data-act="jinv" data-id="${r.id}"`:"";return `<button class="jf ${S._jNew&&S._jNew.has(j.id)?"jnew":""}" ${act||'data-act="nav" data-v="jarvis"'}><span class="jft mono">${new Date(j.at).toLocaleTimeString("nl-BE",{hour:"2-digit",minute:"2-digit"})}</span><span class="ji">${j.klaar?"✅":JICON[j.soort]||"•"}</span><span class="grow">${esc(j.tekst)}</span></button>`}).join(""):'<div class="empty">Nog niets gebeurd vandaag. Zodra er mail binnenkomt of een rit verandert, zie je het hier.</div>'}</div>
+   ${up?`<details class="jrecent"><summary>Laatste update (${ftime(up.at)})</summary><div class="jupd" style="margin-top:6px"><div class="jtext">${esc(up.tekst)}</div></div></details>`:""}</section>`}
 function jItem(j){const a=j.actie||{},ref=j.ref||{};
   const VV={drivers:"chauffeurs",vehicles:"voertuigen",documents:"documenten"};
   const btns=j.open&&!j.klaar?[

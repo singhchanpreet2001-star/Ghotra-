@@ -335,3 +335,10 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 .jhit{outline:3px solid var(--accent)!important;outline-offset:2px;border-radius:10px;transition:outline-color .3s}
 @media (prefers-reduced-motion:reduce){#jcur{transition:opacity .3s}}
 .jrecent{margin-top:10px}.jrecent summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--muted);padding:4px 0}.jrecent .jlist{margin-top:6px}
+.jfeed{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+.jf{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:9px 14px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--ink);font:inherit;font-size:13.5px;line-height:1.4;cursor:pointer}
+.jf:last-child{border-bottom:0}.jf:hover{background:var(--sunk)}
+.jf .jft{color:var(--muted);font-size:12px;flex:none;padding-top:1px}.jf .ji{flex:none}
+.jf.jnew{animation:jnew 2.5s ease}
+@keyframes jnew{0%{background:var(--accent-soft);transform:translateY(-4px)}20%{transform:none}100%{background:transparent}}
+@media (prefers-reduced-motion:reduce){.jf.jnew{animation:none;background:var(--accent-soft)}}

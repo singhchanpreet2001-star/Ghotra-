@@ -106,6 +106,9 @@ function emit(col, id, doc, prev) {
     }
   }
 }
+// Kantoormeldingen op de gsm: als Jarvis aanstaat, komen die gebundeld in zijn update om de 2 uur.
+function officePush(msg) { try { if (jarvis && jarvis.cfg().aan) return; } catch {} push.notifyRole(["admin", "dispatch"], msg); }
+const officeOnline = userId => [...clients].some(c => c.user && c.user.id === userId);
 function emitOffice(obj) { for (const c of clients) if (auth.isOffice(c.user)) sse(c.res, obj); }
 setInterval(() => { for (const c of clients) { try { c.res.write(": ping\n\n"); } catch {} } }, 25000);
 
@@ -146,7 +149,7 @@ async function processCmr(orderId, buf, type, name, byUser, wait) {
   const prev = o;
   const upd = store.patch("orders", orderId, { cmr: { id: f.id, name: f.name, type: f.type, size: f.size, at: now, door: byUser.name || byUser.email }, status: o.status === "Gefactureerd" ? "Gefactureerd" : "Gelost", tijden: { Gelost: (o.tijden || {}).Gelost || now }, cmrCheck: null, cmrCheckErr: "" });
   emit("orders", orderId, upd, prev);
-  if (byUser.role === "driver") push.notifyRole(["admin", "dispatch"], { title: `CMR ontvangen voor ${o.ref}`, body: `${o.laadplaats} → ${o.losplaats} is gelost. De conceptfactuur staat klaar ter controle.`, url: "/dispatch#facturen" });
+  if (byUser.role === "driver") officePush({ title: `CMR ontvangen voor ${o.ref}`, body: `${o.laadplaats} → ${o.losplaats} is gelost. De conceptfactuur staat klaar ter controle.`, url: "/dispatch#facturen" });
   const job = (async () => {
     let check = null;
     if (ai.configured()) {
@@ -538,7 +541,8 @@ on("POST", "/api/driver/ziek", async (req, res, u) => {
   const doc = store.put("absences", id, { chauffeurId: u.driverId, type: "Ziek", van: today, tot: /^\d{4}-\d{2}-\d{2}$/.test(b.tot || "") ? b.tot : "", notitie: ("Gemeld via chauffeursapp. " + String(b.notitie || "")).trim(), gemeld: new Date().toISOString() });
   emit("absences", id, doc, null);
   if (jarvis) jarvis.kick();
-  push.notifyRole(["admin", "dispatch"], { title: `${d.naam || u.name} meldt zich ziek`, body: "Controleer de planning: ritten van vandaag hebben een andere chauffeur nodig.", url: "/dispatch#planning" });
+  // ziekmelding altijd meteen op de gsm, ook als Jarvis aanstaat
+  push.notifyRole(["admin", "dispatch"], { title: `🤒 ${d.naam || u.name} meldt zich ziek`, body: jarvis && jarvis.cfg().aan ? "Jarvis zoekt meteen een vervanger voor zijn ritten. Je ziet het resultaat op Vandaag." : "Controleer de planning: ritten van vandaag hebben een andere chauffeur nodig.", url: "/dispatch#vandaag" });
   send(res, 200, { ok: true });
 });
 
@@ -610,7 +614,7 @@ async function pollMail() {
     if (fresh.length) {
       emitOffice({ type: "mail", items: fresh.map(m => ({ ...m, box: "inbox" })) });
       const m = fresh[0];
-      push.notifyRole(["admin", "dispatch"], fresh.length === 1
+      officePush(fresh.length === 1
         ? { title: "Nieuwe mail van " + (m.fromName || m.from), body: (m.hasAtt ? "📎 " : "") + (m.subject || "(geen onderwerp)"), url: "/dispatch#mail" }
         : { title: fresh.length + " nieuwe mails", body: fresh.slice(0, 3).map(x => (x.fromName || x.from) + ": " + (x.subject || "")).join("\n"), url: "/dispatch#mail" });
     }
@@ -622,6 +626,6 @@ function schedule(ms) { clearTimeout(mailTimer); mailTimer = setTimeout(pollMail
 schedule(15000);
 
 let jarvis = null;
-try { if (createJarvis && pdf && ubl) jarvis = createJarvis({ store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ }); } catch (e) { console.error("Jarvis kon niet starten:", e.message); }
+try { if (createJarvis && pdf && ubl) jarvis = createJarvis({ store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ, officeOnline }); } catch (e) { console.error("Jarvis kon niet starten:", e.message); }
 
 server.listen(PORT, () => console.log(`Ghotra draait op poort ${PORT} · gegevens in ${store.DATA_DIR}`));
