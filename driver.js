@@ -117,14 +117,15 @@ async function openRoute(o){
    <div id="dmap" class="map"></div>
    <div class="foot"><button class="btn sm" data-act="follow" id="followBtn">${follow?"Volgen aan":"Volgen uit"}</button><button class="btn sm" data-act="recalc" data-id="${o.id}">Opnieuw berekenen</button><span class="muted" style="font-size:12px;flex:1">${esc([d.vehicle.hoogte?"h "+d.vehicle.hoogte+" m":"",d.vehicle.breedte?"b "+d.vehicle.breedte+" m":"",d.vehicle.massa?d.vehicle.massa+" t":""].filter(Boolean).join(" · ")||"Geen voertuigmaten bekend")}</span><a class="btn sm" href="${esc(gmaps(addr(o,leg)))}" target="_blank" rel="noopener">Google Maps</a></div>`;
   try{loadCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css");await loadScript("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js")}catch(e){$("#dmap").outerHTML='<div class="notice">De kaart kon niet laden.</div>';return}
-  const L=window.L;if(map)map.remove();
-  map=L.map("dmap",{zoomControl:false});L.control.zoom({position:"bottomright"}).addTo(map);
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const el=$("#dmap");if(!el)return;
+  const L=window.L;if(map){try{map.remove()}catch(e){}map=null}if(el._leaflet_id)el._leaflet_id=null;
+  map=L.map(el,{zoomControl:false});L.control.zoom({position:"bottomright"}).addTo(map);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(map);
   const pts=r?r.coords:[[d.end.lat,d.end.lng]];
   const line=L.polyline(pts,{color:"#0d9466",weight:7,opacity:.9}).addTo(map);
   L.circleMarker([d.end.lat,d.end.lng],{radius:10,color:"#fff",weight:3,fillColor:leg==="laad"?"#a96608":"#c2352f",fillOpacity:1}).addTo(map).bindTooltip(d.end.label);
   map.on("dragstart",()=>{follow=false;const b=$("#followBtn");if(b)b.textContent="Volgen uit"});
-  if(r)map.fitBounds(line.getBounds(),{padding:[30,30]});else map.setView([d.end.lat,d.end.lng],15);
+  const fit=()=>{if(!map)return;map.invalidateSize();if(r)map.fitBounds(line.getBounds(),{padding:[30,30]});else map.setView([d.end.lat,d.end.lng],15)};fit();setTimeout(fit,250);
   if(S.lastPos)onPos(S.lastPos)}
 function dist(a,b){const R=6371e3,t=Math.PI/180,dl=(b[0]-a[0])*t,dn=(b[1]-a[1])*t,x=Math.sin(dl/2)**2+Math.cos(a[0]*t)*Math.cos(b[0]*t)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
 function onPos(p){S.lastPos=p;
