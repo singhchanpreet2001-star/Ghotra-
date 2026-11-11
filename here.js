@@ -40,21 +40,24 @@ async function truckRoute(from, to, vehicle = {}, adr = false) {
   if (+vehicle.lengte) p.set("vehicle[length]", cm(vehicle.lengte));
   if (+vehicle.massa) p.set("vehicle[grossWeight]", Math.round(+vehicle.massa * 1000));
   if (adr) p.set("vehicle[tunnelCategory]", "C");
-  const r = await fetch("https://router.hereapi.com/v8/routes?" + p.toString(), { signal: AbortSignal.timeout(20000) });
+  p.set("return", "polyline,summary,actions,instructions,incidents");
+  let r = await fetch("https://router.hereapi.com/v8/routes?" + p.toString(), { signal: AbortSignal.timeout(20000) });
+  if (r.status === 400) { p.set("return", "polyline,summary,actions,instructions"); r = await fetch("https://router.hereapi.com/v8/routes?" + p.toString(), { signal: AbortSignal.timeout(20000) }); }
   if (r.status === 401 || r.status === 403) throw Object.assign(new Error("De HERE-sleutel is ongeldig."), { code: "auth" });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { console.warn("HERE route", r.status, JSON.stringify(j).slice(0, 500)); throw Object.assign(new Error(`HERE kon de route niet berekenen (${r.status}): ${[j.title, j.cause].filter(Boolean).join(" – ") || "onbekende fout"}`), { code: "here_" + r.status }); }
   const route = (j.routes || [])[0];
   if (!route) { console.warn("HERE geen route", JSON.stringify(j).slice(0, 500)); throw Object.assign(new Error("Geen vrachtwagenroute gevonden" + (j.notices && j.notices.length ? ": " + j.notices.map(n => n.title || n.code).join("; ") : ". Controleer de adressen en de voertuigmaten.")), { code: "no_route" }); }
-  let coords = [], length = 0, duration = 0, base = 0; const steps = [], notices = [];
+  let coords = [], length = 0, duration = 0, base = 0; const steps = [], notices = [], incidents = [];
   for (const s of route.sections) {
     const pts = decodePolyline(s.polyline); const offset = coords.length;
     coords = coords.concat(pts);
     length += s.summary.length; duration += s.summary.duration; base += s.summary.baseDuration || s.summary.duration;
-    (s.actions || []).forEach(a => steps.push({ text: a.instruction || a.action, length: a.length || 0, duration: a.duration || 0, at: offset + (a.offset || 0), action: a.action, direction: a.direction || "" }));
+    (s.actions || []).forEach(a => steps.push({ text: a.instruction || a.action, length: a.length || 0, duration: a.duration || 0, at: offset + (a.offset || 0), action: a.action, direction: a.direction || "", severity: a.severity || "", exit: a.exit || null }));
+    (s.incidents || []).forEach(i => incidents.push({ type: i.type || "", text: (i.description && (i.description.value || i.description)) || i.type || "Verkeershinder", critical: /critical|major/i.test(i.criticality || "") }));
     (s.notices || []).forEach(n => notices.push({ title: n.title || n.code, code: n.code, severity: n.severity }));
   }
-  return { coords, length, duration, trafficDelay: Math.max(0, duration - base), steps, notices };
+  return { coords, length, duration, trafficDelay: Math.max(0, duration - base), steps, notices, incidents: incidents.slice(0, 20) };
 }
 
 // Test: adres zoeken en een vrachtwagenroute Antwerpen → Brussel berekenen.
@@ -70,4 +73,17 @@ async function test() {
   } catch (e) { return { ok: false, msg: "Route berekenen mislukt: " + e.message }; }
 }
 
-module.exports = { config, configured, geocode, truckRoute, decodePolyline, test };
+// Verkeerstegel (file-kleuren) via HERE; de sleutel blijft op de server.
+const tileCache = new Map();
+async function trafficTile(z, x, y) {
+  const k = `${z}/${x}/${y}`, c = tileCache.get(k);
+  if (c && Date.now() - c.t < 120000) return c.buf;
+  const r = await fetch(`https://traffic.maps.hereapi.com/v3/flow/mc/${z}/${x}/${y}/png?apiKey=${encodeURIComponent(config().key)}`, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw Object.assign(new Error("Verkeerstegel niet beschikbaar"), { status: r.status });
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (tileCache.size > 3000) tileCache.delete(tileCache.keys().next().value);
+  tileCache.set(k, { t: Date.now(), buf });
+  return buf;
+}
+
+module.exports = { config, configured, geocode, truckRoute, decodePolyline, test, trafficTile };
