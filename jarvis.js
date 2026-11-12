@@ -501,6 +501,35 @@ JSON: {"bedrijven":[{"naam":"","sector":"","land":"","plaats":"","telefoon":"","
       return { gevonden: saved.length };
     } finally { searching.delete("chauffeurs"); }
   }
+  // Vrachtwagens zoeken: echte advertenties op tweedehandssites, volgens je zoekprofiel.
+  const VTYPE = { bakwagen_schuifzeil: "bakwagen (motorwagen/bakwagen) met schuifzeilen / curtainsider (Pritsche/Plane, Schiebeplane, tautliner)", bakwagen_gesloten: "bakwagen met gesloten opbouw (koffer/box)", trekker: "trekker (Sattelzugmaschine, tractor unit) 4x2", oplegger: "oplegger tautliner/schuifzeil (Curtainsider-Auflieger)" };
+  async function zoekVoertuigen(profiel) {
+    if (!ai.configured()) throw Object.assign(new Error("AI is niet gekoppeld"), { status: 409 });
+    const p = { type: "bakwagen_schuifzeil", landen: "België, Nederland, Duitsland", ...(profiel || store.setting("voertuigZoek") || {}) };
+    if (searching.has("voertuigen")) return { bezig: true }; searching.add("voertuigen");
+    try {
+      store.setting("voertuigZoek", { ...p, laatst: new Date().toISOString() });
+      const known = store.all("kansen").filter(k => k.soort === "voertuig").map(k => k.website).filter(Boolean);
+      const wens = [p.mtm ? `toegelaten massa (MTM) ongeveer ${p.mtm} ton` : "", p.laadvermogen ? `laadvermogen minstens ${p.laadvermogen} kg` : "", p.opbouw ? `opbouwlengte ${p.opbouw} m` : "", p.bak ? (p.bak === "automaat" ? "automatische versnellingsbak" : "manuele versnellingsbak") : "", p.merken ? `merk: ${p.merken}` : "", p.maxPrijs ? `maximaal € ${p.maxPrijs} (excl. btw)` : "", p.vanafJaar ? `bouwjaar ${p.vanafJaar} of nieuwer` : "", p.maxKm ? `hooguit ${p.maxKm} km` : "", p.euro6 ? "Euro 6" : "", p.laadklep ? "met laadklep" : "", p.extra || ""].filter(Boolean).join(", ");
+      act(`Ik zoek ${(VTYPE[p.type] || p.type).split(" (")[0]}…`, { view: "kansen" });
+      const r = await ai.research({ system: SYS_ZOEK + " Je zoekt tweedehands bedrijfsvoertuigen voor een transportbedrijf. Geef alleen echte advertenties die je online vond, met hun echte link; verzin nooit prijzen of kilometerstanden.", maxUses: 10,
+        schema: '{"voertuigen":[{"titel":"","merk":"","model":"","bouwjaar":"","km":"","prijs":"","land":"","plaats":"","verkoper":"","telefoon":"","link":"","kenmerken":"","waarom":""}]}',
+        prompt: `Zoek 6 tot 10 te koop staande ${VTYPE[p.type] || p.type}${wens ? ": " + wens : ""}. Landen: ${p.landen || "België, Nederland, Duitsland"}.
+Zoek op sites met advertenties voor bedrijfsvoertuigen, zoals Truckscout24, mobile.de (Nutzfahrzeuge), AutoScout24 Trucks, Mascus, Trucksnl, 2dehands/2ememain, Marktplaats, Via Mobilis en de voorraadpagina's van truckdealers.
+Geef per voertuig: titel, merk, model, bouwjaar, km (kilometerstand), prijs (met munt, excl. of incl. btw zoals vermeld), land, plaats, verkoper (bedrijf), telefoon (als vermeld), link (directe link naar de advertentie), kenmerken (bv. opbouwlengte, laadvermogen, laadklep, euronorm, versnellingsbak) en waarom (één zin: waarom interessant of let op).
+${known.length ? "Sla deze advertenties over: " + known.slice(-40).join(" ") : ""}
+JSON: {"voertuigen":[{"titel":"","merk":"","model":"","bouwjaar":"","km":"","prijs":"","land":"","plaats":"","verkoper":"","telefoon":"","link":"","kenmerken":"","waarom":""}]}` });
+      if (!r.data) { log("fout", "Ik vond advertenties maar kon ze niet goed lezen. Probeer \"Zoek vrachtwagens\" nog eens."); return { gevonden: 0, fout: true }; }
+      const list = ((r.data.voertuigen) || []).filter(v => v && (v.titel || v.merk) && v.link).slice(0, 10)
+        .filter(v => !known.includes(fixUrl(v.link)))
+        .map(v => ({ naam: v.titel || [v.merk, v.model].filter(Boolean).join(" "), plaats: [v.plaats, v.land].filter(Boolean).join(", "), sector: v.kenmerken || "", telefoon: v.telefoon || "", website: v.link, waarom: v.waarom || "", _v: v }));
+      const saved = saveKansen(list, "voertuig", { bronnen: r.sources.slice(0, 10), zoekType: p.type });
+      for (const k of saved) { const v = (list.find(x => x.naam === k.naam) || {})._v || {}; store.patch("kansen", k.id, { prijs: String(v.prijs || ""), bouwjaar: String(v.bouwjaar || ""), km: String(v.km || ""), verkoper: v.verkoper || "", merk: v.merk || "", website: fixUrl(v.link) }); }
+      log("kansen", saved.length ? `Ik vond ${saved.length} ${saved.length === 1 ? "nieuwe vrachtwagen" : "nieuwe vrachtwagens"} te koop: ${saved.slice(0, 3).map(k => k.naam).join(", ")}${saved.length > 3 ? "…" : ""}. Bekijk ze onder Kansen → Vrachtwagens.` : "Ik vond geen nieuwe vrachtwagens die passen bij je zoekopdracht.", { actie: { type: "kansen" } });
+      emitOffice({ type: "kansen" });
+      return { gevonden: saved.length };
+    } finally { searching.delete("voertuigen"); }
+  }
   // Lege terugrit: vrachtwagen lost ver van huis en heeft daarna nog niets.
   let homePos = null;
   async function retourCheck() {
@@ -580,6 +609,8 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
         await step("links controleren", () => checkAllLinks(4));
         const n = nowParts(), lastK = store.setting("jarvisKlantenGezocht");
         for (const k of store.all("kansen").filter(k => k.soort === "klant")) store.del("kansen", k.id); // klanten zoeken staat uit
+        const vz = store.setting("voertuigZoek");
+        if (vz && vz.volgen && n.h >= 8 && workTime() && (!vz.laatst || Date.now() - new Date(vz.laatst).getTime() > 20 * 3600e3)) step("vrachtwagens zoeken", () => zoekVoertuigen(vz));
         const lastP = store.setting("jarvisPartnersGezocht");
         if (n.wd === "Wed" && n.h >= 9 && workTime() && (!lastP || Date.now() - new Date(lastP).getTime() > 6 * 864e5)) step("vaste opdrachtgevers zoeken", () => zoekPartners());
       }
@@ -650,6 +681,8 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
           const d = store.patch("invoices", i.id, { status: "Betaald", betaaldOp: todayLocal() }); emit("invoices", i.id, d, i); log("factuur", `Factuur ${i.nr} op betaald gezet (door ${who}).`, { ref: { col: "invoices", id: i.id } }); return { ok: true }; } },
       { name: "zoek_vaste_opdrachtgevers", description: "Zoekt op het internet betrouwbare logistieke bedrijven in Europa die op lange termijn met onderaannemers (vervoerders zoals wij) werken, met contact en aanmeldlink. Bewaart ze onder Kansen. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
         execute: async () => { await zoekPartners(); return { kansen: store.all("kansen").filter(k => k.soort === "partner" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden, betrouwbaarheid: k.betrouwbaarheid })) }; } },
+      { name: "zoek_vrachtwagens", description: "Zoekt op tweedehandssites echte advertenties van te koop staande vrachtwagens en bewaart ze onder Kansen → Vrachtwagens. type: bakwagen_schuifzeil, bakwagen_gesloten, trekker of oplegger.", inputSchema: { type: "object", properties: { type: { type: "string" }, maxPrijs: { type: "number" }, vanafJaar: { type: "number" }, maxKm: { type: "number" }, euro6: { type: "boolean" }, laadklep: { type: "boolean" }, landen: { type: "string" }, extra: { type: "string" } } },
+        execute: async a => { const r = await zoekVoertuigen({ ...(store.setting("voertuigZoek") || {}), ...a }); return { gevonden: r.gevonden, voertuigen: store.all("kansen").filter(k => k.soort === "voertuig" && k.status === "nieuw").slice(-8).map(k => ({ titel: k.naam, prijs: k.prijs, bouwjaar: k.bouwjaar, km: k.km, plaats: k.plaats, link: k.website })) }; } },
       { name: "zoek_chauffeurs", description: "Zoekt op het internet uitzendkantoren, rekruteerders en vacaturesites om CE-chauffeurs te vinden, en schrijft een vacaturetekst. Bewaart alles onder Kansen → Chauffeurs. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
         execute: async () => { await zoekChauffeurs(); return { kanalen: store.all("kansen").filter(k => k.soort === "chauffeur" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, sector: k.sector, plaats: k.plaats, telefoon: k.telefoon, website: k.website })), vacature: (store.setting("vacatureTekst") || {}).nl || "" }; } },
       { name: "kansen", description: "Lijst van gevonden kansen: vaste opdrachtgevers die met onderaannemers werken, kanalen om chauffeurs te vinden, en retourvracht, met contactgegevens en status.", inputSchema: { type: "object", properties: { soort: { type: "string", description: "partner, chauffeur of retour" } } },
@@ -661,5 +694,5 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
 
   const timer = setInterval(() => tick("timer"), 3 * 60 * 1000);
   setTimeout(() => tick("start"), 20000);
-  return { whenIdle: async () => { for (let i = 0; i < 300 && (busy || q().length); i++) await new Promise(r => setTimeout(r, 2000)); }, tick, onNewMail, update, resolve, offer, catchup, zoekKlanten, zoekPartners, zoekChauffeurs, zoekOnderaannemers: async id => { const o = store.get("orders", id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekOnderaannemers(o, "Op jouw vraag."); }, cfg, tools, note: (t, fout) => log(fout ? "fout" : "telefoon", t), DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
+  return { zoekVoertuigen, whenIdle: async () => { for (let i = 0; i < 300 && (busy || q().length); i++) await new Promise(r => setTimeout(r, 2000)); }, tick, onNewMail, update, resolve, offer, catchup, zoekKlanten, zoekPartners, zoekChauffeurs, zoekOnderaannemers: async id => { const o = store.get("orders", id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekOnderaannemers(o, "Op jouw vraag."); }, cfg, tools, note: (t, fout) => log(fout ? "fout" : "telefoon", t), DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
 };

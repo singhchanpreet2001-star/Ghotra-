@@ -605,7 +605,7 @@ const needJarvis = () => { if (!jarvis) throw httpErr(503, "Atlas is niet geïns
 on("GET", "/api/jarvis", (req, res, u) => {
   need(u, "office"); needJarvis();
   const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at));
-  send(res, 200, { config: jarvis.cfg(), vacature: store.setting("vacatureTekst") || null, items: all.slice(0, 300), kansen: store.all("kansen").filter(k => k.soort !== "klant").sort((a, b) => b.at.localeCompare(a.at)).slice(0, 150), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
+  send(res, 200, { config: jarvis.cfg(), voertuigZoek: store.setting("voertuigZoek") || null, vacature: store.setting("vacatureTekst") || null, items: all.slice(0, 300), kansen: store.all("kansen").filter(k => k.soort !== "klant").sort((a, b) => b.at.localeCompare(a.at)).slice(0, 150), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
 });
 on("POST", "/api/jarvis/item/:id/offer", async (req, res, u, p) => {
   need(u, "office"); needJarvis(); const b = await jsonBody(req);
@@ -618,8 +618,8 @@ on("POST", "/api/jarvis/item/:id/:action", async (req, res, u, p) => {
 });
 on("POST", "/api/jarvis/kansen/zoek", async (req, res, u) => {
   need(u, "office"); needJarvis(); const b = await jsonBody(req);
-  const wat = b.soort === "chauffeur" ? "chauffeurs" : "vaste opdrachtgevers";
-  try { const r = b.soort === "partner" ? await jarvis.zoekPartners() : b.soort === "chauffeur" ? await jarvis.zoekChauffeurs() : (() => { throw Object.assign(new Error("Kies wat Atlas moet zoeken"), { status: 400 }); })();
+  const wat = b.soort === "chauffeur" ? "chauffeurs" : b.soort === "voertuig" ? "vrachtwagens" : "vaste opdrachtgevers";
+  try { const r = b.soort === "voertuig" ? await jarvis.zoekVoertuigen(b.profiel || null) : b.soort === "partner" ? await jarvis.zoekPartners() : b.soort === "chauffeur" ? await jarvis.zoekChauffeurs() : (() => { throw Object.assign(new Error("Kies wat Atlas moet zoeken"), { status: 400 }); })();
     if (!r.bezig) taskDone(u, r.fout ? `⚠️ Zoeken naar ${wat} mislukt` : `🔎 Atlas is klaar met zoeken naar ${wat}`, r.fout ? "Atlas kon de resultaten niet lezen. Probeer het nog eens." : `${r.gevonden || 0} ${r.gevonden === 1 ? "resultaat" : "resultaten"} gevonden. Bekijk ze onder Kansen.`, "/dispatch#kansen");
     send(res, 200, r); }
   catch (e) { taskDone(u, `⚠️ Zoeken naar ${wat} mislukt`, e.message, "/dispatch#kansen"); throw httpErr(e.status || 502, e.message); }
