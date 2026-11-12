@@ -118,7 +118,7 @@ async function chat({ system, messages, tools, web = false }) {
   return "Dat duurde te lang. Stel je vraag iets specifieker.";
 }
 
-// Korte tekst schrijven zonder tools (voor de updates van Jarvis).
+// Korte tekst schrijven zonder tools (voor de updates van Atlas).
 async function write({ system, prompt, maxTokens = 600 }) { return textOf(await call({ system, messages: [{ role: "user", content: prompt }], maxTokens })); }
 
 // Op het internet zoeken (bv. onderaannemers of nieuwe klanten). Geeft het JSON-antwoord en de bronnen terug.

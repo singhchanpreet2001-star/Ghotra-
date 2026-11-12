@@ -307,7 +307,7 @@ textarea{min-height:80px;resize:vertical}
 pre{max-width:100%;box-sizing:border-box;white-space:pre}
 .sec{min-width:0}
 
-/* ---------- Jarvis ---------- */
+/* ---------- Atlas ---------- */
 .jhero{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:18px;border-radius:16px;border:1px solid var(--line);background:var(--surface)}
 .jhero h2{margin:2px 0 4px;font-size:24px}.jhero p{margin:0;color:var(--muted);font-size:14px;max-width:560px}
 .jhero.aan{border-color:var(--accent);box-shadow:inset 4px 0 0 var(--accent)}.jhero.proef{box-shadow:inset 4px 0 0 var(--warn)}.jhero.uit{box-shadow:inset 4px 0 0 var(--line)}
@@ -324,7 +324,7 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 .kpi .badge{background:var(--warn);color:#fff;border-radius:999px;min-width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;padding:0 8px}
 .linkbtn{background:none;border:0;color:var(--accent);text-decoration:underline;font-size:12.5px;padding:0;cursor:pointer;align-self:flex-start}
 .tag.dr{background:var(--bad-soft);color:var(--bad);border-color:transparent}
-/* Jarvis-muisje */
+/* Atlas-muisje */
 #jcur{position:fixed;z-index:60;left:20px;top:80%;width:26px;height:26px;pointer-events:none;opacity:0;transform:scale(.85);transition:left .8s cubic-bezier(.4,.1,.2,1),top .8s cubic-bezier(.4,.1,.2,1),opacity .3s,transform .3s}
 #jcur.on{opacity:1;transform:none}
 #jcur svg{flex:none;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
@@ -343,7 +343,7 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 @keyframes jnew{0%{background:var(--accent-soft);transform:translateY(-4px)}20%{transform:none}100%{background:transparent}}
 @media (prefers-reduced-motion:reduce){.jf.jnew{animation:none;background:var(--accent-soft)}}
 .jf[disabled]{cursor:default;opacity:1}.jf[disabled]:hover{background:none}
-/* praten met Jarvis */
+/* praten met Atlas */
 .orb{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 10px 10px;cursor:pointer;text-align:center}
 .orb span{width:76px;height:76px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#7be3bd,var(--accent) 55%,#06563c);box-shadow:0 0 0 0 rgba(13,148,102,.45);transition:transform .3s}
 .orb.listen span{animation:orbL 1.1s ease-in-out infinite}.orb.speak span{animation:orbS .7s ease-in-out infinite alternate}.orb.think span{animation:orbT 1.4s linear infinite;background:radial-gradient(circle at 35% 30%,#ffe0a3,var(--warn) 60%,#6b4103)}
@@ -361,3 +361,5 @@ pre{max-width:100%;box-sizing:border-box;white-space:pre}
 .kcard .kc{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .kcard.nietinteressant{opacity:.55}.kcard.interessant{border-color:var(--accent)}
 .kcard .krel{font-size:12.5px;color:var(--accent-ink)}
+.vac{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:10px 14px;margin:10px 0;display:flex;flex-direction:column;gap:8px}
+.vac summary{cursor:pointer;font-weight:700}.vac textarea{width:100%;box-sizing:border-box;font:inherit;font-size:13.5px;line-height:1.5;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--sunk);color:var(--ink);resize:vertical}

@@ -1,5 +1,5 @@
 "use strict";
-// Jarvis aan de telefoon (via Twilio): Jarvis belt jou bij problemen, en je kunt met hem praten of hem zelf bellen.
+// Atlas aan de telefoon (via Twilio): Atlas belt jou bij problemen, en je kunt met hem praten of hem zelf bellen.
 const crypto = require("crypto");
 
 const DEF = { aan: false, sid: "", token: "", nummer: "", gsm: "", stem: "Polly.Ruben", taal: "nl-NL", van: 6, tot: 22,
@@ -27,7 +27,7 @@ module.exports = function createPhone({ store, ai, TZ, publicBase }) {
     return `<Response><Gather input="speech" language="${xml(c.taal)}" speechTimeout="auto" action="${xml(url)}" method="POST" actionOnEmptyResult="true">${say(text)}</Gather><Redirect method="POST">${xml(url)}&amp;stil=1</Redirect></Response>`;
   }
   const hangup = text => `<Response>${say(text)}<Hangup/></Response>`;
-  const SYSTEM = () => `Je bent Jarvis, de dispatcher van transportbedrijf Ghotra Transport, en je praat aan de telefoon met de zaakvoerder. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", timeZone: TZ })}.
+  const SYSTEM = () => `Je bent Atlas, de dispatcher van transportbedrijf Ghotra Transport, en je praat aan de telefoon met de zaakvoerder. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", timeZone: TZ })}.
 Antwoord kort en natuurlijk zoals in een telefoongesprek: één tot drie zinnen, geen opsommingen, geen symbolen, bedragen voluit (bv. "zeshonderdvijftig euro"), tijden als "acht uur" of "half tien". Gebruik de tools en verzin niets.
 Je mag op duidelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; herhaal kort wat je gaat doen en doe het pas als hij het bevestigt. Prijzen naar klanten, facturen versturen en mails sturen doe je niet: zeg dat hij dat in de app doet.
 Eindig met een korte vraag als er nog iets te beslissen is.`;
@@ -38,7 +38,7 @@ Eindig met een korte vraag als er nog iets te beslissen is.`;
     catch (e) { s.answer = "Sorry, dat lukte niet: " + (e.message || "onbekende fout") + ". Probeer het nog eens of kijk in de app."; }
     s.conv.push({ role: "assistant", content: s.answer }); s.busy = false;
   }
-  const BYE = /^(nee[ ,.]*)?(dank je|dankje|bedankt|merci|dat is alles|da's alles|tot later|tot straks|doei|daag|dag jarvis|salut|stop|niets|nee dank)/i;
+  const BYE = /^(nee[ ,.]*)?(dank je|dankje|bedankt|merci|dat is alles|da's alles|tot later|tot straks|doei|daag|dag atlas|salut|stop|niets|nee dank)/i;
 
   // Twilio roept dit aan bij elke stap van het gesprek. Geeft TwiML terug.
   async function voice(p, q) {
@@ -47,8 +47,8 @@ Eindig met een korte vraag als er nog iets te beslissen is.`;
       if (!allowed(p.From)) return hangup("Dit nummer is niet gekend. Tot ziens.");
       id = "in-" + (p.CallSid || crypto.randomBytes(6).toString("hex"));
       calls.set(id, { conv: [], at: Date.now(), silent: 0 });
-      onLog(`📞 Je belde Jarvis.`);
-      return listen(id, "Hallo, met Jarvis. Waarmee kan ik helpen?");
+      onLog(`📞 Je belde Atlas.`);
+      return listen(id, "Hallo, met Atlas. Waarmee kan ik helpen?");
     }
     const s = calls.get(id); if (!s) return hangup("Dit gesprek is verlopen. Bel gerust opnieuw.");
     s.at = Date.now();
@@ -65,7 +65,7 @@ Eindig met een korte vraag als er nog iets te beslissen is.`;
     return `<Response>${say("Momentje.")}<Redirect method="POST">${xml(`${publicBase()}/api/phone/voice?call=${encodeURIComponent(id)}&wacht=1`)}</Redirect></Response>`;
   }
 
-  // Handtekening van Twilio controleren (zodat niemand anders je Jarvis kan aansturen).
+  // Handtekening van Twilio controleren (zodat niemand anders je Atlas kan aansturen).
   function validSignature(url, params, sig) {
     const c = cfg(); if (!c.token || !sig) return false;
     const data = url + Object.keys(params).sort().map(k => k + params[k]).join("");
@@ -74,18 +74,18 @@ Eindig met een korte vraag als er nog iets te beslissen is.`;
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
-  // ---------- Jarvis belt jou ----------
+  // ---------- Atlas belt jou ----------
   async function dial(text, why) {
     const c = cfg(); if (!configured()) throw Object.assign(new Error("Telefoon is nog niet ingesteld"), { status: 409 });
     const to = nums()[0]; if (!to) throw Object.assign(new Error("Vul je gsm-nummer in"), { status: 400 });
     const id = "out-" + crypto.randomBytes(8).toString("hex");
-    const intro = `Hallo, met Jarvis van Ghotra. ${text} Wat wil je dat ik doe?`;
+    const intro = `Hallo, met Atlas van Ghotra. ${text} Wat wil je dat ik doe?`;
     calls.set(id, { conv: [{ role: "assistant", content: intro }], intro, at: Date.now(), silent: 0 });
     const body = new URLSearchParams({ To: to, From: norm(c.nummer), Url: `${publicBase()}/api/phone/voice?call=${id}&intro=1`, Method: "POST", Timeout: "30" });
     const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(c.sid)}/Calls.json`, { method: "POST", headers: { authorization: "Basic " + Buffer.from(c.sid + ":" + c.token).toString("base64"), "content-type": "application/x-www-form-urlencoded" }, body, signal: AbortSignal.timeout(15000) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(`Twilio weigerde de oproep (${r.status}): ${j.message || "onbekende fout"}`), { status: 502 });
-    onLog(`📞 Jarvis belde je: ${text}`);
+    onLog(`📞 Atlas belde je: ${text}`);
     return { ok: true, sid: j.sid, why };
   }
   // Probleem melden: bundelt meldingen en belt hooguit om de 10 minuten.
