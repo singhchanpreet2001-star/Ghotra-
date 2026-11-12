@@ -627,7 +627,7 @@ on("POST", "/api/jarvis/kansen/zoek", async (req, res, u) => {
 // Kans wissen: weg uit de lijst, en Atlas stelt dit bedrijf niet meer voor.
 on("DELETE", "/api/jarvis/kans/:id", (req, res, u, p) => {
   need(u, "office"); const k = store.get("kansen", p.id); if (!k) throw httpErr(404, "Niet gevonden");
-  const weg = store.setting("kansenGewist") || []; const n = String(k.naam || "").toLowerCase(); if (n && !weg.includes(n)) store.setting("kansenGewist", [...weg, n].slice(-1000));
+  const weg = store.setting("kansenGewist") || []; const n = String((k.soort === "voertuig" ? k.website : k.naam) || "").toLowerCase(); if (n && !weg.includes(n)) store.setting("kansenGewist", [...weg, n].slice(-1000));
   store.del("kansen", p.id); emitOffice({ type: "kansen" }); send(res, 200, { ok: true });
 });
 on("POST", "/api/jarvis/kans/:id", async (req, res, u, p) => {

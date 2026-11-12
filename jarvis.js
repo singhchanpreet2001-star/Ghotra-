@@ -385,8 +385,12 @@ module.exports = function createJarvis(x) {
     const have = store.all("kansen"), out = [], weg = (store.setting("kansenGewist") || []);
     for (const b of list) {
       const naam = String(b.naam || "").trim(); if (!naam) continue;
-      if (have.some(k => k.soort === soort && k.naam.toLowerCase() === naam.toLowerCase() && (k.voorRit || "") === (extra.voorRit || ""))) continue;
-      if (weg.includes(naam.toLowerCase())) continue;
+      if (soort === "voertuig") { // camions: per advertentie (link), niet per naam — er zijn veel "DAF LF 290"s
+        if (!b.website || have.some(k => k.soort === "voertuig" && k.website === b.website) || weg.includes(String(b.website).toLowerCase())) continue;
+      } else {
+        if (have.some(k => k.soort === soort && k.naam.toLowerCase() === naam.toLowerCase() && (k.voorRit || "") === (extra.voorRit || ""))) continue;
+        if (weg.includes(naam.toLowerCase())) continue;
+      }
       const id = uid(), k = store.put("kansen", id, { soort, naam, plaats: b.plaats || "", sector: b.sector || "", telefoon: b.telefoon || "", email: b.email || "", website: b.website || "", waarom: b.waarom || "", status: "nieuw", at: new Date().toISOString(), ...extra });
       out.push(k);
     }
@@ -415,25 +419,34 @@ module.exports = function createJarvis(x) {
     emitOffice({ type: "kansen" }); return d;
   }
   // ---- advertenties van vrachtwagens: directe link? nog te koop? ----
-  const SOLD = /(niet meer beschikbaar|is verkocht|werd verkocht|reeds verkocht|status:\s*verkocht|>\s*verkocht\s*<|nicht mehr verf(ü|ue)gbar|wurde verkauft|bereits verkauft|>\s*verkauft\s*<|no longer available|has been sold|>\s*sold\s*<|listing (has )?expired|advertentie is (verwijderd|verlopen)|deze advertentie bestaat niet|dieses angebot ist nicht mehr|anzeige (ist )?(nicht mehr|deaktiviert)|annonce n'est plus disponible|>\s*vendu\s*<|plus disponible)/i;
-  function isAdUrl(u) {
-    try { const x = new URL(u), p = x.pathname;
-      if (/\/(search|zoeken|suche|results|resultaten|category|categorie|aanbod|catalog)(\/|$)/i.test(p) && !/\d{5,}/.test(p)) return false;
-      return /\d{5,}/.test(p) || /ts-\d{3}-\d{2}-\d{3}/i.test(p) || /\/i-\d+/.test(p) || (/\.html?$/i.test(p) && p.split("/").filter(Boolean).length >= 2);
-    } catch { return false; }
-  }
-  // true = nog te koop, false = verkocht/weg/geen advertentie, null = kon niet controleren (bv. site blokkeert bots)
-  async function adStatus(u, v = {}) {
-    if (!isAdUrl(u)) return { ok: false, reden: "geen directe advertentielink" };
+  // Verkocht? Alleen kijken naar de titel/kop en naar duidelijke meldingen over déze advertentie (niet naar menu's, filters of "recent verkocht"-blokken).
+  const SOLD_HEAD = /(\bverkocht\b|\bverkauft\b|\bsold\b|\bvendu\b|niet meer beschikbaar|nicht mehr verf(ü|ue)gbar|no longer available|plus disponible|niet gevonden|not found|nicht gefunden|bestaat niet)/i;
+  const SOLD_BODY = /(deze advertentie is (niet meer beschikbaar|verwijderd|verlopen|offline)|advertentie (is )?niet meer (beschikbaar|actief)|dit voertuig is (al )?verkocht|deze (vrachtwagen|wagen|machine) is (al )?verkocht|dieses (angebot|inserat|fahrzeug) ist (leider )?nicht mehr (verf(ü|ue)gbar|aktiv|online)|(dieses )?fahrzeug wurde (bereits )?verkauft|(this|the) (listing|ad|advert|advertisement|vehicle|truck|offer) (is no longer available|has been sold|has been removed|has expired|is sold)|cette annonce n'est plus (disponible|active)|ce v(é|e)hicule a (d(é|e)j(à|a) )?(é|e)t(é|e) vendu)/i;
+  const visible = html => html.replace(/<(script|style|noscript|template|select|nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ");
+  function isAdUrl(u) { try { const x = new URL(u), p = x.pathname;
+    if (/\/(search|zoeken|suche|results|resultaten|category|categorie|aanbod|catalog)(\/|$)/i.test(p) && !/\d{5,}/.test(p)) return false;
+    return /\d{5,}/.test(p) || /ts-\d{3}-\d{2}-\d{3}/i.test(p) || /\/i-\d+/.test(p) || (/\.html?$/i.test(p) && p.split("/").filter(Boolean).length >= 2);
+  } catch { return false; } }
+  const host = u => { try { return new URL(u).hostname.replace(/^(www|nl|de|fr|en|m)\./, "").split(".").slice(-2)[0]; } catch { return ""; } };
+  // ok: true = staat nog te koop, false = verkocht/weg (weglaten), null = kon niet controleren (tonen met waarschuwing)
+  async function adStatus(u) {
+    if (!isAdUrl(u)) return { ok: false, reden: "geen directe advertentielink", code: "link" };
     try {
       const r = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36", accept: "text/html,application/xhtml+xml", "accept-language": "nl-BE,nl;q=0.9,de;q=0.8,en;q=0.7" } });
-      if (r.status === 404 || r.status === 410) return { ok: false, reden: "advertentie bestaat niet meer" };
+      if (r.status === 404 || r.status === 410) return { ok: false, reden: "advertentie bestaat niet meer", code: "weg" };
       if (r.status >= 400) return { ok: null, reden: "site liet geen controle toe" };
-      if (!isAdUrl(r.url)) return { ok: false, reden: "doorverwezen naar een algemene pagina (meestal: verkocht)" };
-      const html = (await r.text()).slice(0, 800000);
-      const head = (html.match(/<title[^>]*>([\s\S]{0,300}?)<\/title>/i) || [])[1] || "";
-      if (SOLD.test(head) || SOLD.test(html)) return { ok: false, reden: "verkocht of niet meer beschikbaar" };
-      return { ok: true, reden: "" };
+      if (r.url && r.url !== u && !isAdUrl(r.url)) {
+        // Doorverwezen: naar een overzicht van dezelfde site = meestal verkocht; naar cookie/login/andere site = onbekend.
+        if (host(r.url) !== host(u) || /(consent|cookie|privacy|login|signin|captcha|challenge|gdpr|verify|robot)/i.test(r.url)) return { ok: null, reden: "site liet geen controle toe" };
+        return { ok: false, reden: "doorverwezen naar een algemene pagina (meestal: verkocht)", code: "verkocht" };
+      }
+      const html = (await r.text()).slice(0, 1500000);
+      const pick = re => ((html.match(re) || [])[1] || "").replace(/<[^>]+>/g, " ").trim();
+      const title = pick(/<title[^>]*>([\s\S]{0,300}?)<\/title>/i), og = pick(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{0,300})/i), h1 = pick(/<h1[^>]*>([\s\S]{0,300}?)<\/h1>/i);
+      if (/"availability"\s*:\s*"[^"]*(SoldOut|OutOfStock|Discontinued)"/i.test(html)) return { ok: false, reden: "verkocht", code: "verkocht", titel: og || title };
+      if ([title, og, h1].some(t => SOLD_HEAD.test(t))) return { ok: false, reden: "verkocht of niet meer beschikbaar", code: "verkocht" };
+      if (SOLD_BODY.test(visible(html))) return { ok: false, reden: "verkocht of niet meer beschikbaar", code: "verkocht" };
+      return { ok: true, reden: "", titel: (og || title || h1).replace(/\s+/g, " ").slice(0, 120) };
     } catch { return { ok: null, reden: "site niet bereikbaar voor controle" }; }
   }
   async function checkAds(max = 6) {
@@ -551,18 +564,27 @@ De link moet de directe pagina van die ene advertentie zijn, met het advertentie
 Geef per voertuig: titel, merk, model, bouwjaar, km (kilometerstand), prijs (met munt, excl. of incl. btw zoals vermeld), land, plaats, verkoper (bedrijf), telefoon (als vermeld), link (directe link naar de advertentie), kenmerken (bv. opbouwlengte, laadvermogen, laadklep, euronorm, versnellingsbak) en waarom (één zin: waarom interessant of let op).
 ${known.length ? "Sla deze advertenties over: " + known.slice(-40).join(" ") : ""}
 JSON: {"voertuigen":[{"titel":"","merk":"","model":"","bouwjaar":"","km":"","prijs":"","land":"","plaats":"","verkoper":"","telefoon":"","link":"","kenmerken":"","waarom":""}]}` });
-      if (!r.data) { log("fout", "Ik vond advertenties maar kon ze niet goed lezen. Probeer \"Zoek vrachtwagens\" nog eens."); return { gevonden: 0, fout: true }; }
-      let cand = ((r.data.voertuigen) || []).filter(v => v && (v.titel || v.merk) && v.link).slice(0, 12).map(v => ({ ...v, link: fixUrl(v.link) })).filter(v => v.link && !known.includes(v.link));
-      const geenLink = cand.filter(v => !isAdUrl(v.link)).length; cand = cand.filter(v => isAdUrl(v.link));
+      if (!r.data && !(r.sources || []).some(x => isAdUrl(x.url))) { log("fout", "Ik vond advertenties maar kon ze niet goed lezen. Probeer \"Zoek vrachtwagens\" nog eens."); return { gevonden: 0, fout: true }; }
+      const ai_ = ((r.data && r.data.voertuigen) || []).filter(v => v && (v.titel || v.merk) && v.link).slice(0, 12).map(v => ({ ...v, link: fixUrl(v.link) }));
+      // Ook directe advertentielinks uit de zoekresultaten gebruiken (als de AI ze niet zelf opnam).
+      const extra = (r.sources || []).map(x => ({ titel: String(x.title || "").replace(/\s+/g, " ").trim(), link: fixUrl(x.url), uitBron: true })).filter(v => v.link && isAdUrl(v.link) && !ai_.some(a => a.link === v.link));
+      let cand = [...ai_, ...extra].filter((v, i, l) => v.link && !known.includes(v.link) && l.findIndex(x => x.link === v.link) === i);
+      const tel = { link: 0, weg: 0, verkocht: 0 };
+      tel.link = cand.filter(v => !isAdUrl(v.link)).length; cand = cand.filter(v => isAdUrl(v.link)).slice(0, 16);
       act(`Ik controleer ${cand.length} advertenties: bestaan ze nog en zijn ze niet verkocht?`, { view: "kansen" });
-      const checked = []; let verkocht = 0;
-      for (const v of cand) { const st = await adStatus(v.link, v); if (st.ok === false) { verkocht++; continue; } checked.push({ ...v, _st: st }); }
+      const checked = [];
+      for (const v of cand) {
+        const st = await adStatus(v.link); if (st.ok === false) { tel[st.code || "verkocht"]++; continue; }
+        if (v.uitBron) { if (st.ok !== true) continue; if (st.titel && (!v.titel || /^ts \d|^[\d\s]+$/i.test(v.titel))) v.titel = st.titel; if (!v.titel) continue; v.waarom = "Gevonden in de zoekresultaten; controleer de details in de advertentie."; }
+        checked.push({ ...v, _st: st });
+      }
+      const verkocht = tel.verkocht + tel.weg, geenLink = tel.link;
       const list = checked.slice(0, 10)
         .map(v => ({ naam: v.titel || [v.merk, v.model].filter(Boolean).join(" "), plaats: [v.plaats, v.land].filter(Boolean).join(", "), sector: v.kenmerken || "", telefoon: v.telefoon || "", website: v.link, waarom: v.waarom || "", _v: v }));
       const saved = saveKansen(list, "voertuig", { bronnen: r.sources.slice(0, 10), zoekType: p.type });
       for (const k of saved) { const v = (list.find(x => x.naam === k.naam) || {})._v || {}; store.patch("kansen", k.id, { prijs: String(v.prijs || ""), bouwjaar: String(v.bouwjaar || ""), km: String(v.km || ""), verkoper: v.verkoper || "", merk: v.merk || "", website: v.link, adCheck: new Date().toISOString(), adOk: v._st ? v._st.ok : null, adReden: v._st ? v._st.reden : "", linksGecontroleerd: new Date().toISOString() }); }
       const weg = verkocht + geenLink;
-      log("kansen", (saved.length ? `Ik vond ${saved.length} ${saved.length === 1 ? "nieuwe vrachtwagen" : "nieuwe vrachtwagens"} te koop: ${saved.slice(0, 3).map(k => k.naam).join(", ")}${saved.length > 3 ? "…" : ""}. Bekijk ze onder Kansen → Vrachtwagens.` : "Ik vond geen nieuwe vrachtwagens die passen bij je zoekopdracht.") + (weg ? ` ${weg} advertentie${weg === 1 ? "" : "s"} liet ik weg (verkocht, verlopen of geen directe link).` : ""), { actie: { type: "kansen" } });
+      log("kansen", (saved.length ? `Ik vond ${saved.length} ${saved.length === 1 ? "nieuwe vrachtwagen" : "nieuwe vrachtwagens"} te koop: ${saved.slice(0, 3).map(k => k.naam).join(", ")}${saved.length > 3 ? "…" : ""}. Bekijk ze onder Kansen → Vrachtwagens.` : "Ik vond geen nieuwe vrachtwagens die passen bij je zoekopdracht.") + (weg ? ` Weggelaten: ${[verkocht ? verkocht + " verkocht of verlopen" : "", geenLink ? geenLink + " zonder directe advertentielink" : ""].filter(Boolean).join(", ")}.` : ""), { actie: { type: "kansen" } });
       emitOffice({ type: "kansen" });
       return { gevonden: saved.length, weggelaten: weg };
     } finally { searching.delete("voertuigen"); }
