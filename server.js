@@ -16,8 +16,8 @@ const mail = load("mail");
 const ai = load("ai");
 const push = load("push");
 const here = load("here");
-// Jarvis en zijn hulpbestanden zijn optioneel: ontbreekt er één, dan draait de app gewoon verder zonder Jarvis.
-function tryLoad(name) { try { return load(name); } catch (e) { console.error(`LET OP: ${name}.js ontbreekt of bevat een fout (${e.message}). De app draait verder zonder Jarvis.`); return null; } }
+// Atlas en zijn hulpbestanden zijn optioneel: ontbreekt er één, dan draait de app gewoon verder zonder Atlas.
+function tryLoad(name) { try { return load(name); } catch (e) { console.error(`LET OP: ${name}.js ontbreekt of bevat een fout (${e.message}). De app draait verder zonder Atlas.`); return null; } }
 const pdf = tryLoad("pdf");
 const ubl = tryLoad("ubl");
 const createJarvis = tryLoad("jarvis");
@@ -111,7 +111,7 @@ function emit(col, id, doc, prev) {
 let seenBase = "";
 function rememberBase(req) { const h = req.headers["x-forwarded-host"] || req.headers.host; if (!h || /^(localhost|127\.|\[::1\])/.test(h)) return; const b = "https://" + h; if (b !== seenBase) { seenBase = b; try { if ((store.setting("publicBase") || "") !== b) store.setting("publicBase", b); } catch {} } }
 function publicBase() { return (process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : "") || seenBase || store.setting("publicBase") || "").replace(/\/$/, ""); }
-// Kantoormeldingen op de gsm: als Jarvis aanstaat, komen die gebundeld in zijn update om de 2 uur.
+// Kantoormeldingen op de gsm: als Atlas aanstaat, komen die gebundeld in zijn update om de 2 uur.
 function officePush(msg) { try { if (jarvis && jarvis.cfg().aan) return; } catch {} push.notifyRole(["admin", "dispatch"], msg); }
 const officeOnline = userId => [...clients].some(c => c.user && c.user.id === userId);
 function emitOffice(obj) { for (const c of clients) if (auth.isOffice(c.user)) sse(c.res, obj); }
@@ -395,7 +395,7 @@ on("POST", "/api/settings/telefoon/test", async (req, res, u) => {
   need(u, "admin"); if (!phone) throw httpErr(503, "phone.js ontbreekt");
   try { send(res, 200, await phone.dial("Dit is een testoproep. Als je dit hoort, werkt bellen. Je kunt me nu iets vragen, bijvoorbeeld wat er morgen gepland staat.", "test")); } catch (e) { throw httpErr(e.status || 502, e.message); }
 });
-// Twilio: gesprekken met Jarvis (geen login, wel een geldige Twilio-handtekening)
+// Twilio: gesprekken met Atlas (geen login, wel een geldige Twilio-handtekening)
 on("POST", "/api/phone/voice", async (req, res, u) => {
   if (!phone) { res.writeHead(503); return res.end(); }
   const raw = (await readBody(req, 1e6)).toString("utf-8"), params = Object.fromEntries(new URLSearchParams(raw));
@@ -432,7 +432,7 @@ const mailErr = e => { throw httpErr(e.code === "not_configured" ? 409 : e.code 
 on("GET", "/api/mail/list", async (req, res, u) => {
   need(u, "office"); const s = new URL(req.url, "http://x").searchParams;
   const cat = s.get("cat");
-  if (cat) { // categorie van Jarvis: uit de eigen opslag, zonder mailserver
+  if (cat) { // categorie van Atlas: uit de eigen opslag, zonder mailserver
     const all = store.all("mailinfo").filter(i => cat === "dringend" ? i.dringend : i.soort === cat).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     return send(res, 200, { items: all.slice(0, 100).map(i => ({ uid: i.uid, from: i.from, fromName: i.fromName, subject: i.subject, date: i.date, hasAtt: i.hasAtt, unread: false, info: i })), next: null });
   }
@@ -487,9 +487,9 @@ on("POST", "/api/ai/cmr/:id", async (req, res, u, p) => {
 on("POST", "/api/ai/chat", async (req, res, u) => {
   need(u, "office"); const b = await jsonBody(req);
   const b2 = bedrijf();
-  const system = `Je bent Jarvis, de assistent in Ghotra Dispatch, de planningsapp van transportbedrijf ${b2.naam || "Ghotra Transport"}. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ })}.
+  const system = `Je bent Atlas, de assistent in Ghotra Dispatch, de planningsapp van transportbedrijf ${b2.naam || "Ghotra Transport"}. Vandaag is ${new Date().toLocaleDateString("nl-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ })}.
 Beantwoord vragen over ritten, chauffeurs, afwezigheden, voertuigen, klanten, facturen, documenten en mail. Gebruik de tools en verzin niets. Antwoord kort en concreet in de taal van de gebruiker (standaard Nederlands), zonder markdown; gewone zinnen of korte opsommingen met streepjes. Bedragen in euro.
-Je heet Jarvis. Je kunt op het internet zoeken (bv. bedrijven, adressen, wegeninfo, regels) en met je tools nieuwe klanten (verladers) of vaste opdrachtgevers die met onderaannemers werken laten opzoeken. Je kunt op uitdrukkelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; vraag bij twijfel eerst kort om bevestiging en zeg daarna wat je gedaan hebt. Andere wijzigingen of mails doe je niet: zeg dan welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
+Je heet Atlas. Je kunt op het internet zoeken (bv. bedrijven, adressen, wegeninfo, regels) en met je tools vaste opdrachtgevers die met onderaannemers werken of kanalen om chauffeurs te vinden laten opzoeken. Je kunt op uitdrukkelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; vraag bij twijfel eerst kort om bevestiging en zeg daarna wat je gedaan hebt. Andere wijzigingen of mails doe je niet: zeg dan welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
   const msgs = (b.messages || []).filter(m => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-14);
   if (!msgs.length || msgs[msgs.length - 1].role !== "user") throw httpErr(400, "Geen vraag");
   try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis ? jarvis.tools(u) : []), web: true }) }); } catch (e) { aiErr(e); }
@@ -588,17 +588,17 @@ on("POST", "/api/driver/ziek", async (req, res, u) => {
   emit("absences", id, doc, null);
   if (jarvis) jarvis.kick();
   if (phone) phone.alert("ziek", `${d.naam || u.name} meldt zich ziek.`);
-  // ziekmelding altijd meteen op de gsm, ook als Jarvis aanstaat
-  push.notifyRole(["admin", "dispatch"], { title: `🤒 ${d.naam || u.name} meldt zich ziek`, body: jarvis && jarvis.cfg().aan ? "Jarvis zoekt meteen een vervanger voor zijn ritten. Je ziet het resultaat op Vandaag." : "Controleer de planning: ritten van vandaag hebben een andere chauffeur nodig.", url: "/dispatch#vandaag" });
+  // ziekmelding altijd meteen op de gsm, ook als Atlas aanstaat
+  push.notifyRole(["admin", "dispatch"], { title: `🤒 ${d.naam || u.name} meldt zich ziek`, body: jarvis && jarvis.cfg().aan ? "Atlas zoekt meteen een vervanger voor zijn ritten. Je ziet het resultaat op Vandaag." : "Controleer de planning: ritten van vandaag hebben een andere chauffeur nodig.", url: "/dispatch#vandaag" });
   send(res, 200, { ok: true });
 });
 
-// --- Jarvis (automatische piloot) ---
-const needJarvis = () => { if (!jarvis) throw httpErr(503, "Jarvis is niet geïnstalleerd: upload jarvis.js, pdf.js en ubl.js naast server.js."); };
+// --- Atlas (automatische piloot) ---
+const needJarvis = () => { if (!jarvis) throw httpErr(503, "Atlas is niet geïnstalleerd: upload jarvis.js, pdf.js en ubl.js naast server.js."); };
 on("GET", "/api/jarvis", (req, res, u) => {
   need(u, "office"); needJarvis();
   const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at));
-  send(res, 200, { config: jarvis.cfg(), items: all.slice(0, 300), kansen: store.all("kansen").sort((a, b) => b.at.localeCompare(a.at)).slice(0, 150), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
+  send(res, 200, { config: jarvis.cfg(), vacature: store.setting("vacatureTekst") || null, items: all.slice(0, 300), kansen: store.all("kansen").filter(k => k.soort !== "klant").sort((a, b) => b.at.localeCompare(a.at)).slice(0, 150), status: { mail: mail.configured(), ai: ai.configured(), here: here.configured() } });
 });
 on("POST", "/api/jarvis/item/:id/offer", async (req, res, u, p) => {
   need(u, "office"); needJarvis(); const b = await jsonBody(req);
@@ -610,7 +610,13 @@ on("POST", "/api/jarvis/item/:id/:action", async (req, res, u, p) => {
 });
 on("POST", "/api/jarvis/kansen/zoek", async (req, res, u) => {
   need(u, "office"); needJarvis(); const b = await jsonBody(req);
-  try { send(res, 200, b.soort === "partner" ? await jarvis.zoekPartners() : await jarvis.zoekKlanten(true)); } catch (e) { throw httpErr(e.status || 502, e.message); }
+  try { send(res, 200, b.soort === "partner" ? await jarvis.zoekPartners() : b.soort === "chauffeur" ? await jarvis.zoekChauffeurs() : (() => { throw Object.assign(new Error("Kies wat Atlas moet zoeken"), { status: 400 }); })()); } catch (e) { throw httpErr(e.status || 502, e.message); }
+});
+// Kans wissen: weg uit de lijst, en Atlas stelt dit bedrijf niet meer voor.
+on("DELETE", "/api/jarvis/kans/:id", (req, res, u, p) => {
+  need(u, "office"); const k = store.get("kansen", p.id); if (!k) throw httpErr(404, "Niet gevonden");
+  const weg = store.setting("kansenGewist") || []; const n = String(k.naam || "").toLowerCase(); if (n && !weg.includes(n)) store.setting("kansenGewist", [...weg, n].slice(-1000));
+  store.del("kansen", p.id); emitOffice({ type: "kansen" }); send(res, 200, { ok: true });
 });
 on("POST", "/api/jarvis/kans/:id", async (req, res, u, p) => {
   need(u, "office"); const b = await jsonBody(req), k = store.get("kansen", p.id); if (!k) throw httpErr(404, "Niet gevonden");
@@ -685,14 +691,14 @@ schedule(15000);
 
 let phone = null;
 try { if (createPhone) phone = createPhone({ store, ai, TZ, publicBase }); } catch (e) { console.error("Telefoon kon niet starten:", e.message); }
-// Welk soort probleem is een vraag van Jarvis? (bepaalt of Jarvis je belt)
+// Welk soort probleem is een vraag van Atlas? (bepaalt of Atlas je belt)
 function phoneAlert(key, tekst) {
   if (!phone) return;
   const soort = /^mail-/.test(key) && /^🔴/.test(tekst) ? "dringend" : /^ziek-/.test(key) ? "ziek" : /^plan-/.test(key) && /niemand is vrij|geen andere chauffeur/i.test(tekst) ? "geenChauffeur" : /^waak-start-/.test(key) ? "nietVertrokken" : /^inv-/.test(key) && /^⚠️/.test(tekst) ? "cmrProbleem" : "";
   if (soort) phone.alert(soort, tekst);
 }
 let jarvis = null;
-try { if (createJarvis && pdf && ubl) jarvis = createJarvis({ phoneAlert, store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ, officeOnline }); } catch (e) { console.error("Jarvis kon niet starten:", e.message); }
+try { if (createJarvis && pdf && ubl) jarvis = createJarvis({ phoneAlert, store, push, mail, ai, here, db, emit, emitOffice, notifyOrderChange, createConcept, saveFile, readFile, absOn, todayLocal, fdate, fdt, eurS, ogm, lineText, calcTotals, bedrijf, uid, pdf, ubl, TZ, officeOnline }); } catch (e) { console.error("Atlas kon niet starten:", e.message); }
 if (phone) phone.setup({
   tools: user => aiTools().concat(jarvis ? jarvis.tools(user) : []),
   who: () => { const a = db.prepare("SELECT name,email FROM users WHERE role='admin' AND active=1 ORDER BY created LIMIT 1").get() || {}; return { name: (a.name || "zaakvoerder") + " (telefoon)", email: a.email || "telefoon" }; },

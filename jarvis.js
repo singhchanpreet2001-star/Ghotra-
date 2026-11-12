@@ -572,7 +572,7 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
         await step("retourvracht", retourCheck);
         await step("links controleren", () => checkAllLinks(4));
         const n = nowParts(), lastK = store.setting("jarvisKlantenGezocht");
-        if (n.wd === "Mon" && n.h >= 9 && workTime() && (!lastK || Date.now() - new Date(lastK).getTime() > 6 * 864e5)) step("klanten zoeken", () => zoekKlanten(false));
+        for (const k of store.all("kansen").filter(k => k.soort === "klant")) store.del("kansen", k.id); // klanten zoeken staat uit
         const lastP = store.setting("jarvisPartnersGezocht");
         if (n.wd === "Wed" && n.h >= 9 && workTime() && (!lastP || Date.now() - new Date(lastP).getTime() > 6 * 864e5)) step("vaste opdrachtgevers zoeken", () => zoekPartners());
       }
@@ -645,10 +645,8 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
         execute: async () => { await zoekPartners(); return { kansen: store.all("kansen").filter(k => k.soort === "partner" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden, betrouwbaarheid: k.betrouwbaarheid })) }; } },
       { name: "zoek_chauffeurs", description: "Zoekt op het internet uitzendkantoren, rekruteerders en vacaturesites om CE-chauffeurs te vinden, en schrijft een vacaturetekst. Bewaart alles onder Kansen → Chauffeurs. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
         execute: async () => { await zoekChauffeurs(); return { kanalen: store.all("kansen").filter(k => k.soort === "chauffeur" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, sector: k.sector, plaats: k.plaats, telefoon: k.telefoon, website: k.website })), vacature: (store.setting("vacatureTekst") || {}).nl || "" }; } },
-      { name: "zoek_nieuwe_klanten", description: "Zoekt op het internet bedrijven die een goede nieuwe klant kunnen zijn en bewaart ze onder Kansen. Duurt ongeveer een minuut.", inputSchema: { type: "object", properties: {} },
-        execute: async () => { await zoekKlanten(true); return { kansen: store.all("kansen").filter(k => k.soort === "klant" && k.status === "nieuw").slice(-8).map(k => ({ naam: k.naam, plaats: k.plaats, sector: k.sector, telefoon: k.telefoon, waarom: k.waarom })) }; } },
-      { name: "kansen", description: "Lijst van gevonden kansen: mogelijke klanten (verladers), vaste opdrachtgevers die met onderaannemers werken, en retourvracht, met contactgegevens en status.", inputSchema: { type: "object", properties: { soort: { type: "string", description: "klant, partner of retour" } } },
-        execute: async a => store.all("kansen").filter(k => !a.soort || k.soort === a.soort).slice(-20).map(k => ({ soort: k.soort, naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden || "", betrouwbaarheid: k.betrouwbaarheid || "", status: k.status, rit: k.rit || "", waarom: k.waarom })) },
+      { name: "kansen", description: "Lijst van gevonden kansen: vaste opdrachtgevers die met onderaannemers werken, kanalen om chauffeurs te vinden, en retourvracht, met contactgegevens en status.", inputSchema: { type: "object", properties: { soort: { type: "string", description: "partner, chauffeur of retour" } } },
+        execute: async a => store.all("kansen").filter(k => k.soort !== "klant" && (!a.soort || k.soort === a.soort)).slice(-20).map(k => ({ soort: k.soort, naam: k.naam, plaats: k.plaats, telefoon: k.telefoon, email: k.email, aanmelden: k.aanmelden || "", betrouwbaarheid: k.betrouwbaarheid || "", status: k.status, rit: k.rit || "", waarom: k.waarom })) },
       { name: "jarvis_status", description: "Wat Atlas de laatste uren deed en welke vragen nog openstaan.", inputSchema: { type: "object", properties: {} },
         execute: async () => { const all = store.all("jarvis").sort((a, b) => b.at.localeCompare(a.at)); return { modus: cfg().aan ? (cfg().proef ? "proefmodus" : "automatisch") : "uit", openVragen: all.filter(j => j.open && !j.klaar).map(j => j.tekst), recent: all.filter(j => !j.open && j.soort !== "update").slice(0, 15).map(j => j.at.slice(0, 16) + " " + j.tekst) }; } },
     ];
