@@ -414,7 +414,37 @@ module.exports = function createJarvis(x) {
     const d = store.patch("kansen", k.id, { website: out.website || "", aanmelden: out.aanmelden || "", webOk: out.websiteOk, linksGecontroleerd: new Date().toISOString() });
     emitOffice({ type: "kansen" }); return d;
   }
-  async function checkAllLinks(max = 6) { for (const k of store.all("kansen").filter(k => !k.linksGecontroleerd).slice(0, max)) { try { await checkLinks(k); } catch {} } }
+  // ---- advertenties van vrachtwagens: directe link? nog te koop? ----
+  const SOLD = /(niet meer beschikbaar|is verkocht|werd verkocht|reeds verkocht|status:\s*verkocht|>\s*verkocht\s*<|nicht mehr verf(ü|ue)gbar|wurde verkauft|bereits verkauft|>\s*verkauft\s*<|no longer available|has been sold|>\s*sold\s*<|listing (has )?expired|advertentie is (verwijderd|verlopen)|deze advertentie bestaat niet|dieses angebot ist nicht mehr|anzeige (ist )?(nicht mehr|deaktiviert)|annonce n'est plus disponible|>\s*vendu\s*<|plus disponible)/i;
+  function isAdUrl(u) {
+    try { const x = new URL(u), p = x.pathname;
+      if (/\/(search|zoeken|suche|results|resultaten|category|categorie|aanbod|catalog)(\/|$)/i.test(p) && !/\d{5,}/.test(p)) return false;
+      return /\d{5,}/.test(p) || /ts-\d{3}-\d{2}-\d{3}/i.test(p) || /\/i-\d+/.test(p) || (/\.html?$/i.test(p) && p.split("/").filter(Boolean).length >= 2);
+    } catch { return false; }
+  }
+  // true = nog te koop, false = verkocht/weg/geen advertentie, null = kon niet controleren (bv. site blokkeert bots)
+  async function adStatus(u, v = {}) {
+    if (!isAdUrl(u)) return { ok: false, reden: "geen directe advertentielink" };
+    try {
+      const r = await fetch(u, { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36", accept: "text/html,application/xhtml+xml", "accept-language": "nl-BE,nl;q=0.9,de;q=0.8,en;q=0.7" } });
+      if (r.status === 404 || r.status === 410) return { ok: false, reden: "advertentie bestaat niet meer" };
+      if (r.status >= 400) return { ok: null, reden: "site liet geen controle toe" };
+      if (!isAdUrl(r.url)) return { ok: false, reden: "doorverwezen naar een algemene pagina (meestal: verkocht)" };
+      const html = (await r.text()).slice(0, 800000);
+      const head = (html.match(/<title[^>]*>([\s\S]{0,300}?)<\/title>/i) || [])[1] || "";
+      if (SOLD.test(head) || SOLD.test(html)) return { ok: false, reden: "verkocht of niet meer beschikbaar" };
+      return { ok: true, reden: "" };
+    } catch { return { ok: null, reden: "site niet bereikbaar voor controle" }; }
+  }
+  async function checkAds(max = 6) {
+    const due = store.all("kansen").filter(k => k.soort === "voertuig" && (!k.adCheck || Date.now() - new Date(k.adCheck).getTime() > 20 * 3600e3)).slice(0, max);
+    for (const k of due) {
+      const st = await adStatus(k.website);
+      if (st.ok === false) { store.del("kansen", k.id); log("kansen", `${k.naam} is weg uit je lijst: ${st.reden}.`); emitOffice({ type: "kansen" }); continue; }
+      store.patch("kansen", k.id, { adCheck: new Date().toISOString(), adOk: st.ok, adReden: st.reden, linksGecontroleerd: new Date().toISOString() });
+    }
+  }
+  async function checkAllLinks(max = 6) { for (const k of store.all("kansen").filter(k => k.soort !== "voertuig" && !k.linksGecontroleerd).slice(0, max)) { try { await checkLinks(k); } catch {} } try { await checkAds(max); } catch {} }
   const kList = l => l.slice(0, 4).map(b => b.naam + (b.plaats ? " (" + b.plaats + ")" : "") + (b.telefoon ? " " + b.telefoon : "")).join(", ");
   const SYS_ZOEK = "Je bent een ervaren dispatcher en zakenontwikkelaar voor een Belgisch transportbedrijf (trekker met oplegger, internationaal Benelux/Frankrijk/Duitsland). Je zoekt op het internet naar echte bedrijven met hun contactgegevens. Verzin nooit bedrijven, telefoonnummers of e-mailadressen: laat een veld leeg als je het niet vond. Antwoord aan het einde met alleen het gevraagde JSON-blok.";
   async function zoekOnderaannemers(o, reden) {
@@ -516,18 +546,25 @@ JSON: {"bedrijven":[{"naam":"","sector":"","land":"","plaats":"","telefoon":"","
         schema: '{"voertuigen":[{"titel":"","merk":"","model":"","bouwjaar":"","km":"","prijs":"","land":"","plaats":"","verkoper":"","telefoon":"","link":"","kenmerken":"","waarom":""}]}',
         prompt: `Zoek 6 tot 10 te koop staande ${VTYPE[p.type] || p.type}${wens ? ": " + wens : ""}. Landen: ${p.landen || "België, Nederland, Duitsland"}.
 Zoek op sites met advertenties voor bedrijfsvoertuigen, zoals Truckscout24, mobile.de (Nutzfahrzeuge), AutoScout24 Trucks, Mascus, Trucksnl, 2dehands/2ememain, Marktplaats, Via Mobilis en de voorraadpagina's van truckdealers.
+Alleen wagens die nu nog te koop staan: geen advertenties met "verkocht", "sold", "verkauft", "reserved/gereserveerd" of "niet meer beschikbaar".
+De link moet de directe pagina van die ene advertentie zijn, met het advertentienummer in de link (bv. trucksnl.com/daf-cf-290-8129039-vd, truckscout24.com/tsp/ts-232-37-206, mascus.nl/…/abcdefgh.html, truck-mobiles.be/advertentie/te-koop/250530333/…). Nooit een zoek-, categorie- of homepagina (zoals trucks.nl/schuifzeil-vrachtwagens/laadklep). Vind je de directe link niet, laat de wagen dan weg.
 Geef per voertuig: titel, merk, model, bouwjaar, km (kilometerstand), prijs (met munt, excl. of incl. btw zoals vermeld), land, plaats, verkoper (bedrijf), telefoon (als vermeld), link (directe link naar de advertentie), kenmerken (bv. opbouwlengte, laadvermogen, laadklep, euronorm, versnellingsbak) en waarom (één zin: waarom interessant of let op).
 ${known.length ? "Sla deze advertenties over: " + known.slice(-40).join(" ") : ""}
 JSON: {"voertuigen":[{"titel":"","merk":"","model":"","bouwjaar":"","km":"","prijs":"","land":"","plaats":"","verkoper":"","telefoon":"","link":"","kenmerken":"","waarom":""}]}` });
       if (!r.data) { log("fout", "Ik vond advertenties maar kon ze niet goed lezen. Probeer \"Zoek vrachtwagens\" nog eens."); return { gevonden: 0, fout: true }; }
-      const list = ((r.data.voertuigen) || []).filter(v => v && (v.titel || v.merk) && v.link).slice(0, 10)
-        .filter(v => !known.includes(fixUrl(v.link)))
+      let cand = ((r.data.voertuigen) || []).filter(v => v && (v.titel || v.merk) && v.link).slice(0, 12).map(v => ({ ...v, link: fixUrl(v.link) })).filter(v => v.link && !known.includes(v.link));
+      const geenLink = cand.filter(v => !isAdUrl(v.link)).length; cand = cand.filter(v => isAdUrl(v.link));
+      act(`Ik controleer ${cand.length} advertenties: bestaan ze nog en zijn ze niet verkocht?`, { view: "kansen" });
+      const checked = []; let verkocht = 0;
+      for (const v of cand) { const st = await adStatus(v.link, v); if (st.ok === false) { verkocht++; continue; } checked.push({ ...v, _st: st }); }
+      const list = checked.slice(0, 10)
         .map(v => ({ naam: v.titel || [v.merk, v.model].filter(Boolean).join(" "), plaats: [v.plaats, v.land].filter(Boolean).join(", "), sector: v.kenmerken || "", telefoon: v.telefoon || "", website: v.link, waarom: v.waarom || "", _v: v }));
       const saved = saveKansen(list, "voertuig", { bronnen: r.sources.slice(0, 10), zoekType: p.type });
-      for (const k of saved) { const v = (list.find(x => x.naam === k.naam) || {})._v || {}; store.patch("kansen", k.id, { prijs: String(v.prijs || ""), bouwjaar: String(v.bouwjaar || ""), km: String(v.km || ""), verkoper: v.verkoper || "", merk: v.merk || "", website: fixUrl(v.link) }); }
-      log("kansen", saved.length ? `Ik vond ${saved.length} ${saved.length === 1 ? "nieuwe vrachtwagen" : "nieuwe vrachtwagens"} te koop: ${saved.slice(0, 3).map(k => k.naam).join(", ")}${saved.length > 3 ? "…" : ""}. Bekijk ze onder Kansen → Vrachtwagens.` : "Ik vond geen nieuwe vrachtwagens die passen bij je zoekopdracht.", { actie: { type: "kansen" } });
+      for (const k of saved) { const v = (list.find(x => x.naam === k.naam) || {})._v || {}; store.patch("kansen", k.id, { prijs: String(v.prijs || ""), bouwjaar: String(v.bouwjaar || ""), km: String(v.km || ""), verkoper: v.verkoper || "", merk: v.merk || "", website: v.link, adCheck: new Date().toISOString(), adOk: v._st ? v._st.ok : null, adReden: v._st ? v._st.reden : "", linksGecontroleerd: new Date().toISOString() }); }
+      const weg = verkocht + geenLink;
+      log("kansen", (saved.length ? `Ik vond ${saved.length} ${saved.length === 1 ? "nieuwe vrachtwagen" : "nieuwe vrachtwagens"} te koop: ${saved.slice(0, 3).map(k => k.naam).join(", ")}${saved.length > 3 ? "…" : ""}. Bekijk ze onder Kansen → Vrachtwagens.` : "Ik vond geen nieuwe vrachtwagens die passen bij je zoekopdracht.") + (weg ? ` ${weg} advertentie${weg === 1 ? "" : "s"} liet ik weg (verkocht, verlopen of geen directe link).` : ""), { actie: { type: "kansen" } });
       emitOffice({ type: "kansen" });
-      return { gevonden: saved.length };
+      return { gevonden: saved.length, weggelaten: weg };
     } finally { searching.delete("voertuigen"); }
   }
   // Lege terugrit: vrachtwagen lost ver van huis en heeft daarna nog niets.
