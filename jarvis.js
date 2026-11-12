@@ -459,11 +459,12 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
       const b = bedrijf(), v = store.all("vehicles").filter(x => x.type !== "Oplegger").length || store.all("drivers").length || 1;
       const known = store.all("customers").map(c => c.naam).concat(store.all("kansen").filter(k => k.soort === "partner").map(k => k.naam), store.setting("kansenGewist") || []);
       act("Ik zoek betrouwbare vaste opdrachtgevers in Europa…", { view: "jarvis" });
-      const r = await ai.research({ system: SYS_ZOEK, maxUses: 8, prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen, België").replace(/\n/g, ", ")}. Wij zijn een kleine vervoerder met ongeveer ${v} trekker(s) + oplegger (13,6 m, tautliner), internationaal rijden mag.
+      const r = await ai.research({ system: SYS_ZOEK, maxUses: 8, schema: '{"bedrijven":[{"naam":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}]}', prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen, België").replace(/\n/g, ", ")}. Wij zijn een kleine vervoerder met ongeveer ${v} trekker(s) + oplegger (13,6 m, tautliner), internationaal rijden mag.
 Zoek 5 tot 8 grote, betrouwbare logistieke bedrijven en expediteurs in Europa (België, Nederland, Duitsland, Frankrijk, Polen, Litouwen, …) die op lange termijn met vaste onderaannemers/charters werken en kleine vervoerders aannemen (bv. zoals DSV, Ewals Cargo Care, Girteka, Raben, Kuehne+Nagel, Jan de Rijk, H.Essers — maar zoek ook minder bekende, liefst met routes vanuit of naar de Benelux). Sla deze namen over: ${known.slice(0, 80).join(", ") || "(geen)"}.
 Betrouwbaar betekent: lang actief, groot, bekende naam, certificaten (bv. ISO, TAPA, SQAS), goede betaalreputatie of vaste betaaltermijnen, een officieel programma om als vervoerder/subcontractor aan te sluiten.
 Geef per bedrijf: naam, land, plaats (hoofdkantoor of vestiging die vervoerders zoekt), telefoon, e-mail (carrier/subcontracting/aankoop transport), website, "aanmelden": de link naar hun pagina of formulier om je als vervoerder/charter aan te melden (als je die vond), "betrouwbaarheid": één zin met de concrete reden, en "waarom": één zin waarom het bij ons past (routes, type vracht, vaste ritten).
 JSON: {"bedrijven":[{"naam":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}]}` });
+      if (!r.data) { log("fout", "Ik vond resultaten maar kon ze niet goed lezen. Probeer \"Zoek vaste opdrachtgevers\" nog eens."); return { gevonden: 0, fout: true }; }
       const list = ((r.data && r.data.bedrijven) || []).filter(x => x && x.naam).slice(0, 8).map(x => ({ ...x, plaats: [x.plaats, x.land].filter(Boolean).join(", "), sector: "logistiek / onderaanneming" }));
       const saved = saveKansen(list, "partner", { bronnen: r.sources.slice(0, 10) });
       for (const k of saved) { const src = list.find(x => x.naam === k.naam) || {}; store.patch("kansen", k.id, { aanmelden: src.aanmelden || "", betrouwbaarheid: src.betrouwbaarheid || "", land: src.land || "" }); }
@@ -480,15 +481,21 @@ JSON: {"bedrijven":[{"naam":"","land":"","plaats":"","telefoon":"","email":"","w
     try {
       const b = bedrijf(), known = store.all("kansen").filter(k => k.soort === "chauffeur").map(k => k.naam).concat(store.setting("kansenGewist") || []);
       act("Ik zoek manieren om chauffeurs te vinden…", { view: "kansen" });
-      const r = await ai.research({ system: SYS_ZOEK, maxUses: 8, prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen, België").replace(/\n/g, ", ")}. Wij zoeken vrachtwagenchauffeurs met rijbewijs CE en code 95 voor trekker-oplegger, nationaal en internationaal (Benelux, Frankrijk, Duitsland).
+      const r = await ai.research({ system: SYS_ZOEK, maxUses: 8, schema: '{"bedrijven":[{"naam":"","sector":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}]}', prompt: `Ons bedrijf: ${b.naam || "Ghotra Transport"}, ${String(b.adres || "Antwerpen, België").replace(/\n/g, ", ")}. Wij zoeken vrachtwagenchauffeurs met rijbewijs CE en code 95 voor trekker-oplegger, nationaal en internationaal (Benelux, Frankrijk, Duitsland).
 Zoek 6 tot 8 betrouwbare manieren om goede chauffeurs te vinden: uitzendkantoren en rekruteringsbureaus die gespecialiseerd zijn in vrachtwagenchauffeurs (in België en Nederland, en ook in landen waar veel CE-chauffeurs vandaan komen zoals Polen, Litouwen, Roemenië of Portugal, liefst met ervaring in plaatsing in België), en de beste vacaturesites of jobplatformen waar CE-chauffeurs zoeken (bv. VDAB, Jobat, Indeed, gespecialiseerde transportjobsites). Sla over: ${known.slice(0, 60).join(", ") || "(geen)"}.
 Geef per item: naam, sector ("uitzendkantoor", "rekruteringsbureau", "vacaturesite" of "opleidingscentrum"), land, plaats, telefoon, e-mail, website, "aanmelden": de link om een vacature te plaatsen of contact op te nemen als werkgever, "betrouwbaarheid": één zin met de concrete reden, "waarom": één zin.
-Schrijf ook een korte, aantrekkelijke vacaturetekst die we meteen kunnen plaatsen: "vacature" in het Nederlands en "vacatureEN" in het Engels (functie, wat we bieden, wat we vragen, hoe solliciteren; laat loon en contactgegevens als [invullen]).
-JSON: {"bedrijven":[{"naam":"","sector":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}],"vacature":"","vacatureEN":""}` });
+Houd elke tekst kort.
+JSON: {"bedrijven":[{"naam":"","sector":"","land":"","plaats":"","telefoon":"","email":"","website":"","aanmelden":"","betrouwbaarheid":"","waarom":""}]}` });
       const list = ((r.data && r.data.bedrijven) || []).filter(x => x && x.naam).slice(0, 8).map(x => ({ ...x, plaats: [x.plaats, x.land].filter(Boolean).join(", ") }));
       const saved = saveKansen(list, "chauffeur", { bronnen: r.sources.slice(0, 10) });
       for (const k of saved) { const src = list.find(x => x.naam === k.naam) || {}; store.patch("kansen", k.id, { aanmelden: src.aanmelden || "", betrouwbaarheid: src.betrouwbaarheid || "", land: src.land || "" }); }
-      if (r.data && (r.data.vacature || r.data.vacatureEN)) store.setting("vacatureTekst", { nl: String(r.data.vacature || ""), en: String(r.data.vacatureEN || ""), at: new Date().toISOString() });
+      if (!r.data) { log("fout", "Ik vond resultaten maar kon ze niet goed lezen. Probeer \"Zoek chauffeurs\" nog eens."); return { gevonden: 0, fout: true }; }
+      // vacaturetekst apart laten schrijven (korter en betrouwbaarder)
+      try {
+        const v = await ai.write({ prompt: `Schrijf een korte, aantrekkelijke vacature voor ${b.naam || "Ghotra Transport"} (${String(b.adres || "België").replace(/\n/g, ", ")}): vrachtwagenchauffeur CE met code 95, trekker-oplegger, nationaal en internationaal (Benelux, Frankrijk, Duitsland). Structuur: titel, wie we zijn (1 zin), wat je doet, wat we bieden, wat we vragen, hoe solliciteren. Laat loon en contactgegevens als [invullen]. Maximaal 180 woorden. Geef eerst de Nederlandse versie, dan een regel met alleen ===EN===, dan dezelfde vacature in het Engels.`, maxTokens: 1500 });
+        const [nl, en] = String(v || "").split(/\n?===EN===\n?/);
+        if (nl && nl.trim()) store.setting("vacatureTekst", { nl: nl.trim(), en: (en || "").trim(), at: new Date().toISOString() });
+      } catch {}
       log("kansen", saved.length ? `Ik vond ${saved.length} manieren om chauffeurs te vinden: ${kList(saved)}. Een vacaturetekst staat klaar onder Kansen → Chauffeurs.` : "Ik vond geen nieuwe kanalen om chauffeurs te vinden.", { actie: { type: "kansen" } });
       emitOffice({ type: "kansen" });
       return { gevonden: saved.length };
@@ -654,5 +661,5 @@ JSON: {"bedrijven":[{"naam":"","plaats":"","sector":"","telefoon":"","email":"",
 
   const timer = setInterval(() => tick("timer"), 3 * 60 * 1000);
   setTimeout(() => tick("start"), 20000);
-  return { tick, onNewMail, update, resolve, offer, catchup, zoekKlanten, zoekPartners, zoekChauffeurs, zoekOnderaannemers: async id => { const o = store.get("orders", id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekOnderaannemers(o, "Op jouw vraag."); }, cfg, tools, note: (t, fout) => log(fout ? "fout" : "telefoon", t), DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
+  return { whenIdle: async () => { for (let i = 0; i < 300 && (busy || q().length); i++) await new Promise(r => setTimeout(r, 2000)); }, tick, onNewMail, update, resolve, offer, catchup, zoekKlanten, zoekPartners, zoekChauffeurs, zoekOnderaannemers: async id => { const o = store.get("orders", id); if (!o) throw Object.assign(new Error("Rit niet gevonden"), { status: 404 }); await zoekOnderaannemers(o, "Op jouw vraag."); }, cfg, tools, note: (t, fout) => log(fout ? "fout" : "telefoon", t), DEFAULTS, kick: () => setTimeout(() => tick("kick"), 1500), stop: () => clearInterval(timer), _pickDriver: pickDriver };
 };

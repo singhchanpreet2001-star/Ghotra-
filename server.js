@@ -111,6 +111,10 @@ function emit(col, id, doc, prev) {
 let seenBase = "";
 function rememberBase(req) { const h = req.headers["x-forwarded-host"] || req.headers.host; if (!h || /^(localhost|127\.|\[::1\])/.test(h)) return; const b = "https://" + h; if (b !== seenBase) { seenBase = b; try { if ((store.setting("publicBase") || "") !== b) store.setting("publicBase", b); } catch {} } }
 function publicBase() { return (process.env.PUBLIC_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? "https://" + process.env.RAILWAY_PUBLIC_DOMAIN : "") || seenBase || store.setting("publicBase") || "").replace(/\/$/, ""); }
+// Is de gebruiker nu in de app (scherm zichtbaar)? Zo niet, dan krijgt hij een melding als een taak van Atlas klaar is.
+const presence = new Map(); // userId → { visible, at }
+const inApp = userId => { const p = presence.get(userId); return !!p && p.visible && Date.now() - p.at < 10 * 60e3 && [...clients].some(c => c.user && c.user.id === userId); };
+function taskDone(u, title, body, url = "/dispatch#vandaag") { try { if (u && !inApp(u.id)) push.notify(u.id, { title, body: String(body || "").replace(/\s+/g, " ").slice(0, 220), url }); } catch {} }
 // Kantoormeldingen op de gsm: als Atlas aanstaat, komen die gebundeld in zijn update om de 2 uur.
 function officePush(msg) { try { if (jarvis && jarvis.cfg().aan) return; } catch {} push.notifyRole(["admin", "dispatch"], msg); }
 const officeOnline = userId => [...clients].some(c => c.user && c.user.id === userId);
@@ -273,6 +277,7 @@ on("POST", "/api/me/password", async (req, res, u) => {
 });
 
 // --- live ---
+on("POST", "/api/presence", async (req, res, u) => { need(u); const b = await jsonBody(req); presence.set(u.id, { visible: !!b.visible, at: Date.now() }); send(res, 200, { ok: true }); });
 on("GET", "/api/events", (req, res, u) => {
   need(u);
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive", "x-accel-buffering": "no" });
@@ -472,7 +477,8 @@ const aiErr = e => { throw httpErr(e.code === "not_configured" ? 409 : 502, e.me
 on("POST", "/api/ai/order", async (req, res, u) => {
   need(u, "office"); const b = await jsonBody(req); const f = readFile(b.fileId); if (!f) throw httpErr(404, "Bestand niet gevonden");
   if (!/^(application\/pdf|image\/)/.test(f.meta.type)) throw httpErr(400, "Alleen pdf of foto");
-  try { send(res, 200, await ai.orderFromFile({ buf: f.buf, type: f.meta.type, name: f.meta.name, company: bedrijf().naam || "Ghotra Transport", today: todayLocal(), sender: b.sender, subject: b.subject, body: b.body })); } catch (e) { aiErr(e); }
+  try { const r = await ai.orderFromFile({ buf: f.buf, type: f.meta.type, name: f.meta.name, company: bedrijf().naam || "Ghotra Transport", today: todayLocal(), sender: b.sender, subject: b.subject, body: b.body }); taskDone(u, "📥 Order gelezen", `${r.laadplaats || "?"} → ${r.losplaats || "?"}${r.laaddatum ? ", laden " + fdt(r.laaddatum) : ""}. Open de app om de rit te bewaren.`, "/dispatch#ritten"); send(res, 200, r); }
+  catch (e) { taskDone(u, "⚠️ Order lezen lukte niet", e.message, "/dispatch#ritten"); aiErr(e); }
 });
 on("POST", "/api/ai/cmr/:id", async (req, res, u, p) => {
   need(u, "office"); const o = store.get("orders", p.id); if (!o || !o.cmr) throw httpErr(404, "Geen CMR bij deze rit");
@@ -492,7 +498,8 @@ Beantwoord vragen over ritten, chauffeurs, afwezigheden, voertuigen, klanten, fa
 Je heet Atlas. Je kunt op het internet zoeken (bv. bedrijven, adressen, wegeninfo, regels) en met je tools vaste opdrachtgevers die met onderaannemers werken of kanalen om chauffeurs te vinden laten opzoeken. Je kunt op uitdrukkelijke vraag een rit toewijzen, een rit annuleren of een factuur op betaald zetten; vraag bij twijfel eerst kort om bevestiging en zeg daarna wat je gedaan hebt. Andere wijzigingen of mails doe je niet: zeg dan welk tabblad of welke knop daarvoor dient (Vandaag, Ritten, Planning, Mail, Facturen, Beheer).`;
   const msgs = (b.messages || []).filter(m => m && (m.role === "user" || m.role === "assistant") && m.content).slice(-14);
   if (!msgs.length || msgs[msgs.length - 1].role !== "user") throw httpErr(400, "Geen vraag");
-  try { send(res, 200, { text: await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis ? jarvis.tools(u) : []), web: true }) }); } catch (e) { aiErr(e); }
+  try { const text = await ai.chat({ system, messages: msgs, tools: aiTools().concat(jarvis ? jarvis.tools(u) : []), web: true }); taskDone(u, "🤖 Atlas heeft geantwoord", text, "/dispatch#chat"); send(res, 200, { text }); }
+  catch (e) { taskDone(u, "⚠️ Atlas kon je vraag niet afmaken", e.message, "/dispatch#chat"); aiErr(e); }
 });
 
 // --- routes en posities ---
@@ -606,11 +613,16 @@ on("POST", "/api/jarvis/item/:id/offer", async (req, res, u, p) => {
 });
 on("POST", "/api/jarvis/item/:id/:action", async (req, res, u, p) => {
   need(u, "office"); needJarvis(); if (!["doe", "klaar"].includes(p.action)) throw httpErr(400, "Onbekende actie");
-  try { send(res, 200, await jarvis.resolve(p.id, p.action, u)); } catch (e) { throw httpErr(e.status || 500, e.message); }
+  try { const d = await jarvis.resolve(p.id, p.action, u); if (p.action === "doe" && d.actie && d.actie.type === "retour") taskDone(u, "🔁 Retourvracht gezocht", "Atlas zocht retourvracht. Bekijk de resultaten onder Kansen.", "/dispatch#kansen"); send(res, 200, d); }
+  catch (e) { if (p.action === "doe") taskDone(u, "⚠️ Atlas kon het niet uitvoeren", e.message); throw httpErr(e.status || 500, e.message); }
 });
 on("POST", "/api/jarvis/kansen/zoek", async (req, res, u) => {
   need(u, "office"); needJarvis(); const b = await jsonBody(req);
-  try { send(res, 200, b.soort === "partner" ? await jarvis.zoekPartners() : b.soort === "chauffeur" ? await jarvis.zoekChauffeurs() : (() => { throw Object.assign(new Error("Kies wat Atlas moet zoeken"), { status: 400 }); })()); } catch (e) { throw httpErr(e.status || 502, e.message); }
+  const wat = b.soort === "chauffeur" ? "chauffeurs" : "vaste opdrachtgevers";
+  try { const r = b.soort === "partner" ? await jarvis.zoekPartners() : b.soort === "chauffeur" ? await jarvis.zoekChauffeurs() : (() => { throw Object.assign(new Error("Kies wat Atlas moet zoeken"), { status: 400 }); })();
+    if (!r.bezig) taskDone(u, r.fout ? `⚠️ Zoeken naar ${wat} mislukt` : `🔎 Atlas is klaar met zoeken naar ${wat}`, r.fout ? "Atlas kon de resultaten niet lezen. Probeer het nog eens." : `${r.gevonden || 0} ${r.gevonden === 1 ? "resultaat" : "resultaten"} gevonden. Bekijk ze onder Kansen.`, "/dispatch#kansen");
+    send(res, 200, r); }
+  catch (e) { taskDone(u, `⚠️ Zoeken naar ${wat} mislukt`, e.message, "/dispatch#kansen"); throw httpErr(e.status || 502, e.message); }
 });
 // Kans wissen: weg uit de lijst, en Atlas stelt dit bedrijf niet meer voor.
 on("DELETE", "/api/jarvis/kans/:id", (req, res, u, p) => {
@@ -624,7 +636,7 @@ on("POST", "/api/jarvis/kans/:id", async (req, res, u, p) => {
   const d = store.patch("kansen", p.id, { status: st, notitie: typeof b.notitie === "string" ? b.notitie.slice(0, 500) : k.notitie || "", door: u.name || u.email, gewijzigd: new Date().toISOString() });
   emitOffice({ type: "kansen" }); send(res, 200, d);
 });
-on("POST", "/api/jarvis/catchup", async (req, res, u) => { need(u, "office"); needJarvis(); try { send(res, 200, await jarvis.catchup()); } catch (e) { throw httpErr(e.status || 502, e.message); } });
+on("POST", "/api/jarvis/catchup", async (req, res, u) => { need(u, "office"); needJarvis(); try { const r = await jarvis.catchup(); send(res, 200, r); if (r.aantal) setTimeout(() => jarvis.whenIdle().then(() => taskDone(u, "📬 Atlas las je mails", `${r.aantal} ${r.aantal === 1 ? "mail" : "mails"} gelezen en gesorteerd. Kijk op Vandaag wat hij deed.`)), 1000); } catch (e) { throw httpErr(e.status || 502, e.message); } });
 on("POST", "/api/jarvis/update", async (req, res, u) => { need(u, "office"); needJarvis(); send(res, 200, { text: await jarvis.update(true) }); });
 on("POST", "/api/jarvis/run", async (req, res, u) => { need(u, "office"); needJarvis(); await jarvis.tick("hand"); send(res, 200, { ok: true }); });
 

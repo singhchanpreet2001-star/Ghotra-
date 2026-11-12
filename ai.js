@@ -122,14 +122,19 @@ async function chat({ system, messages, tools, web = false }) {
 async function write({ system, prompt, maxTokens = 600 }) { return textOf(await call({ system, messages: [{ role: "user", content: prompt }], maxTokens })); }
 
 // Op het internet zoeken (bv. onderaannemers of nieuwe klanten). Geeft het JSON-antwoord en de bronnen terug.
-async function research({ system, prompt, maxUses = 6 }) {
+async function research({ system, prompt, maxUses = 6, schema = "" }) {
   const messages = [{ role: "user", content: prompt }], sources = new Map();
-  for (let i = 0; i < 5; i++) {
-    const j = await call({ system, messages, tools: [WEB(maxUses)], maxTokens: 4000 });
+  for (let i = 0; i < 6; i++) {
+    const j = await call({ system, messages, tools: [WEB(maxUses)], maxTokens: 8000 });
     for (const b of j.content || []) if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) if (r.url) sources.set(r.url, r.title || r.url);
     if (j.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: j.content }); continue; }
-    const text = textOf(j); let data = null; try { data = jsonOf(text); } catch { data = null; }
-    return { text, data, sources: [...sources].map(([url, title]) => ({ url, title })) };
+    // tekstblokken aan elkaar zonder extra regels (bronvermeldingen splitsen de tekst soms midden in het JSON-blok)
+    const text = (j.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+    let data = null; try { data = jsonOf(text); } catch { data = null; }
+    if (!data && text) { // laten herstellen naar geldig JSON
+      try { data = jsonOf(textOf(await call({ messages: [{ role: "user", content: `Zet de gegevens hieronder om naar geldig JSON${schema ? " volgens dit schema: " + schema : ""}. Neem alleen gegevens over die in de tekst staan, verzin niets. Antwoord met alleen JSON.\n\n${text.slice(0, 20000)}` }], maxTokens: 6000 }))); } catch { data = null; }
+    }
+    return { text, data, truncated: j.stop_reason === "max_tokens", sources: [...sources].map(([url, title]) => ({ url, title })) };
   }
   throw new Error("Zoeken duurde te lang");
 }

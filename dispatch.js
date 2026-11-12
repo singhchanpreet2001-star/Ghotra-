@@ -106,7 +106,7 @@ async function reloadData(){const d=await api("/api/data");COLS.forEach(c=>{S[c]
 
 /* ---------- navigation ---------- */
 function go(v){S.view=v;if(location.hash!=="#"+v)location.hash=v;render();window.scrollTo(0,0);if(v==="mail"&&S.mail.state==="idle")loadMail()}
-window.addEventListener("hashchange",()=>{const v=location.hash.slice(1);if(v&&v!==S.view&&(NAV.some(n=>n[0]===v)||SUBVIEWS[v]))go(v)});
+window.addEventListener("hashchange",()=>{const v=location.hash.slice(1);if(v==="chat"){S.ai.open=true;renderAi();history.replaceState(null,"","#"+(S.view||"vandaag"));return}if(v&&v!==S.view&&(NAV.some(n=>n[0]===v)||SUBVIEWS[v]))go(v)});
 function navHTML(){const unread=S.mail.threads.filter(t=>isUnread(t)).length;
   const cur=SUBVIEWS[S.view]?"meer":S.view;
   return NAV.map(([k,l])=>`<a href="#${k}" ${cur===k?'aria-current="page"':""}>${I[k]}${l}${k==="mail"&&unread?`<span class="dot">${unread>9?"9+":unread}</span>`:""}</a>`).join("")}
@@ -1159,6 +1159,9 @@ async function downloadUbl(i){const p=ublProblems(i);if(p.length){toast("Vul eer
 ACT["dl-ubl"]=async d=>{const i=byId("invoices",d.id);if(i&&await downloadUbl(i))toast("E-factuur gedownload. Lever ze aan in Lucy om via Peppol te versturen.")};
 
 /* ---------- live updates ---------- */
+// Laat de server weten of de app zichtbaar is: ben je weg, dan krijg je een melding als Atlas klaar is.
+function presence(){const v=document.visibilityState==="visible";try{fetch("/api/presence",{method:"POST",keepalive:true,credentials:"same-origin",headers:{"content-type":"application/json","x-ghotra":"1"},body:JSON.stringify({visible:v})}).catch(()=>{})}catch(e){}}
+document.addEventListener("visibilitychange",presence);window.addEventListener("pagehide",()=>{try{fetch("/api/presence",{method:"POST",keepalive:true,credentials:"same-origin",headers:{"content-type":"application/json","x-ghotra":"1"},body:JSON.stringify({visible:false})})}catch(e){}});setInterval(()=>{if(document.visibilityState==="visible")presence()},4*60e3);
 function startEvents(){let had=false;const es=new EventSource("/api/events");
   es.onopen=()=>{if(had)reloadData().then(render).catch(()=>{});had=true};
   es.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
@@ -1368,7 +1371,7 @@ Object.assign(ACT,{
  kstat:async d=>{try{await api(`/api/jarvis/kans/${d.id}`,{method:"POST",json:{status:d.v}});await loadJarvis()}catch(e){toast(e.message)}},
  kdel:async(d,btn)=>{if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Zeker? Tik nogmaals";setTimeout(()=>{btn.classList.remove("armed");btn.textContent="🗑️ Wissen"},4000);return}try{await api(`/api/jarvis/kans/${d.id}`,{method:"DELETE"});S.jarvis.kansen=(S.jarvis.kansen||[]).filter(k=>k.id!==d.id);render();toast("Gewist. Atlas stelt dit bedrijf niet meer voor.")}catch(e){toast(e.message)}},
  vaccopy:async d=>{const t=$("#"+d.v);try{await navigator.clipboard.writeText(t.value);toast("Vacaturetekst gekopieerd")}catch(e){t.style.position="static";t.select();document.execCommand("copy");toast("Gekopieerd")}},
- jzoekchauf:async()=>{S.kBusy=true;render();toast("Atlas zoekt manieren om chauffeurs te vinden, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{soort:"chauffeur"}});S.kf="chauffeur";toast(r.bezig?"Atlas is al aan het zoeken":`${r.gevonden||0} kanalen gevonden, vacaturetekst staat klaar`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()},
+ jzoekchauf:async()=>{S.kBusy=true;render();toast("Atlas zoekt manieren om chauffeurs te vinden, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{soort:"chauffeur"}});S.kf="chauffeur";toast(r.bezig?"Atlas is al aan het zoeken":r.fout?"Atlas kon de resultaten niet lezen, probeer nog eens":`${r.gevonden||0} kanalen gevonden, vacaturetekst staat klaar`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()},
  jzoekpartner:async()=>{S.kBusy=true;render();toast("Atlas zoekt betrouwbare vaste opdrachtgevers in Europa, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{soort:"partner"}});S.kf="partner";toast(r.bezig?"Atlas is al aan het zoeken":`${r.gevonden||0} vaste opdrachtgevers gevonden`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()},
  jzoekklant:async()=>{S.kBusy=true;render();toast("Atlas zoekt nieuwe klanten, dit duurt ongeveer een minuut…");try{const r=await api("/api/jarvis/kansen/zoek",{method:"POST",json:{}});toast(r.bezig?"Atlas is al aan het zoeken":`${r.gevonden||0} nieuwe kansen gevonden`)}catch(e){toast(e.message)}S.kBusy=false;await loadJarvis()}});
 Object.assign(ACT,{
@@ -1384,7 +1387,7 @@ Object.assign(ACT,{
   if(!mcp)S.mail.state="nomcp";
   render();
   loadUsers();
-  startEvents();loadJarvis();
+  startEvents();loadJarvis();presence();if(location.hash==="#chat"){S.ai.open=true;renderAi();history.replaceState(null,"","#vandaag")}
   if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   if(S.view==="koppelingen")loadSettings();
   if(mcp)loadMail();
