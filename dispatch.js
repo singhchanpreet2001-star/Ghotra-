@@ -152,6 +152,7 @@ function vVandaag(){
     return `<div class="lane ${d?"":"unassigned"}"><div class="lane-h"><span class="grow">${d?esc(d.naam):"Nog geen chauffeur"}</span>${d&&absOn(d.id,t)?`<span class="pill s-ziek">${esc(absOn(d.id,t).type)}</span>`:""}${d&&d.tel?`<span class="mono muted" style="font-size:12px">${esc(d.tel)}</span>`:""}</div>${os.map(o=>orderRow(o,{noDriver:1})).join("")}</div>`}).join("");
   const al=alerts();
   return `
+  ${pushBanner()}
   <div class="lbl">${new Date().toLocaleDateString("nl-BE",{weekday:"long",day:"numeric",month:"long"})}</div>
   ${jarvisCard()}
   <div class="kpis">
@@ -928,6 +929,7 @@ function vKoppelingen(){const st=S.status||{},admin=S.me&&S.me.role==="admin",s=
 function vMeer(){const admin=S.me&&S.me.role==="admin",st=S.status||{};
   const items=[["jarvis","🤖 Atlas",(()=>{const c=(S.jarvis||{}).config||{};return (!c.aan?"Staat uit":c.proef?"Proefmodus":"Automatisch")+" · "+jOpen().length+" vragen"})()],["documenten","Documenten",S.documents.length+" bestanden · vergunningen, verzekeringen, contracten"],["klanten","Klanten",S.customers.length+" klanten"],["chauffeurs","Chauffeurs",S.drivers.length+" chauffeurs · logins voor de chauffeursapp"],["voertuigen","Voertuigen",S.vehicles.length+" voertuigen"],["bedrijf","Bedrijfsgegevens","Gebruikt op facturen en CMR"],["facturatie","Facturatie","Wachttijd: "+(waitCfg().aan?fmin(waitCfg().vrij*60)+" vrij"+(waitCfg().tarief?" · "+eur(waitCfg().tarief)+"/u":" · nog geen tarief"):"uit")],["gebruikers","Logins",(S.users||[]).length+" logins voor kantoor en chauffeurs"],["koppelingen","Koppelingen",[st.mail?"mail ✓":"mail —",st.ai?"AI ✓":"AI —",st.here?"routes ✓":"routes —"].join(" · ")]];
   return `<div class="list">${items.map(([k,l,s])=>`<button class="row" data-act="nav" data-v="${k}"><span class="grow"><span class="t1">${l}</span><span class="t2">${s}</span></span><span class="muted">›</span></button>`).join("")}</div>
+  <section class="sec"><h2>Meldingen</h2><div class="list"><button class="row" data-act="pushon"><span class="grow"><span class="t1">🔔 Meldingen op dit toestel</span><span class="t2">${S.push==="on"?"Staan aan. Tik om een testmelding te krijgen.":S.push==="install"?"iPhone: zet de app eerst op je beginscherm (Safari → Delen → Zet op beginscherm).":S.push==="denied"?"Geblokkeerd in je browser of gsm-instellingen.":"Staan uit. Tik om ze aan te zetten."}</span></span><span class="pill ${S.push==="on"?"s-gelost":""}">${S.push==="on"?"Aan":"Uit"}</span></button></div></section>
   <section class="sec"><h2>Mijn account</h2><div class="list"><button class="row" data-act="account"><span class="grow"><span class="t1">${esc((S.me||{}).name||(S.me||{}).email||"")}</span><span class="t2">${esc((S.me||{}).email||"")} · ${admin?"Beheerder":"Dispatch"}</span></span><span class="muted">›</span></button></div></section>
   ${admin?`<section class="sec"><h2>Opnieuw beginnen</h2><div class="notice warn"><b>Alle ritten en facturen wissen</b><span>Handig na het testen. Gewist worden: alle ritten en facturen (met CMR's en order-PDF's), het Atlas-logboek en zijn vragen, en de Atlas-labels op mails. De nummering begint opnieuw.</span><span>Blijven bewaard: koppelingen, klanten, chauffeurs, voertuigen, logins, documenten en instellingen.</span>
    <form class="form" data-form="reset" style="margin-top:8px"><label class="field" for="rs_c"><span class="lbl">Typ WISSEN om te bevestigen</span><input id="rs_c" name="bevestig" autocomplete="off" placeholder="WISSEN"></label><div class="actions" style="align-self:end"><button class="btn danger" type="submit">Ritten en facturen wissen</button></div></form></div></section>`:""}
@@ -944,13 +946,24 @@ function renderSheet(){const sh=S.sheet;if(!sh)return;const p=$("#panel");
 function closeSheet(){if(routeMap){routeMap.remove();routeMap=null;truckMarker=null}S.sheet=null;$("#sheet").hidden=true;document.body.style.overflow=""}
 
 /* ---------- meldingen (push) ---------- */
+// Staan meldingen aan op dit toestel? on | off | denied | install (iPhone: eerst op beginscherm) | none
+async function pushState(){try{const ios=/iPhone|iPad|iPod/.test(navigator.userAgent),standalone=window.navigator.standalone||matchMedia("(display-mode: standalone)").matches;
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window))return ios&&!standalone?"install":"none";
+  if(Notification.permission==="denied")return "denied";if(Notification.permission!=="granted")return "off";
+  const reg=await navigator.serviceWorker.getRegistration();const sub=reg&&await reg.pushManager.getSubscription();return sub?"on":"off"}catch(e){return "off"}}
+async function refreshPush(){const st=await pushState();if(S.push!==st){S.push=st;if(["vandaag","meer"].includes(S.view))render()}}
+function pushBanner(){const st=S.push;if(!st||st==="on"||(st==="none")||lsGetD("ghotra_pushhide")==="1")return"";
+  const ios=/iPhone|iPad|iPod/.test(navigator.userAgent);
+  return `<div class="notice warn pushban"><b>🔔 Meldingen staan nog niet aan op dit toestel</b><span>${st==="install"?"Op een iPhone: tik in Safari op Delen (vierkantje met pijl) → <b>Zet op beginscherm</b>. Open de app daarna via het icoon op je beginscherm en tik hier op Meldingen aanzetten.":st==="denied"?(ios?"Meldingen zijn geblokkeerd. Ga naar Instellingen → Meldingen → Ghotra en zet ze aan.":"Meldingen zijn geblokkeerd in je browser. Klik op het slotje links van het adres → Meldingen → Toestaan, en vernieuw de pagina."):"Zo krijg je een melding als Atlas klaar is met een taak, bij een ziekmelding en elke 2 uur een korte update."}</span>
+   <div class="actions">${st==="off"?'<button class="btn sm primary" data-act="pushon">Meldingen aanzetten</button>':""}<button class="btn sm" data-act="pushhide">Later</button></div></div>`}
+const lsGetD=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
 async function enablePush(){
   if(!("serviceWorker" in navigator)||!("PushManager" in window)){toast(/iPhone|iPad/.test(navigator.userAgent)?"Zet de app eerst op je beginscherm (Deel → Zet op beginscherm) en open hem van daaruit.":"Deze browser ondersteunt geen meldingen.");return}
   try{const perm=await Notification.requestPermission();if(perm!=="granted"){toast("Meldingen zijn niet toegestaan in de browser.");return}
     const reg=await navigator.serviceWorker.register("/sw.js");await navigator.serviceWorker.ready;
     const {key}=await api("/api/push/key");const raw=Uint8Array.from(atob(key.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-key.length%4)%4)),c=>c.charCodeAt(0));
     const sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:raw});
-    await api("/api/push/subscribe",{method:"POST",json:{endpoint:sub.endpoint}});await api("/api/push/test",{method:"POST",json:{}});toast("Meldingen staan aan")}
+    await api("/api/push/subscribe",{method:"POST",json:{endpoint:sub.endpoint}});await api("/api/push/test",{method:"POST",json:{}});toast("Meldingen staan aan. Je krijgt zo een testmelding.");refreshPush()}
   catch(e){toast("Meldingen aanzetten lukte niet: "+(e.message||e))}}
 
 /* ---------- acties: aanvullingen ---------- */
@@ -985,6 +998,7 @@ Object.assign(ACT,{
  newuser:()=>openSheet({type:"newuser"}),
  logout:async()=>{try{await api("/api/logout",{method:"POST",json:{}})}catch(e){}location.href="/login"},
  pushon:()=>enablePush(),
+ pushhide:()=>{try{localStorage.setItem("ghotra_pushhide","1")}catch(e){}render()},
  copy:async d=>{try{await navigator.clipboard.writeText(d.v);toast("Gekopieerd")}catch(e){const el=$("#pwdv");if(el){const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}toast("Kopieer de geselecteerde tekst")}},
  pwdmail:()=>{const sh=S.sheet;const url=location.origin+"/login";openSheet({type:"compose",draft:{to:sh.email,subject:"Je login voor de "+(sh.role==="driver"?"chauffeursapp":"dispatch")+" van "+(S.bedrijf.naam||"Ghotra Transport"),body:`Hallo ${sh.name||""},\n\nJe kunt inloggen op ${url}\nE-mail: ${sh.email}\nWachtwoord: ${sh.pwd}\n\nOp je telefoon of tablet: open de link, log in en kies "Zet op beginscherm". Zet daarna in de app de meldingen aan, dan krijg je een seintje bij een nieuwe rit.\n\nMet vriendelijke groeten,\n${S.bedrijf.naam||"Ghotra Transport"}`}})},
  userpwd:async(d,btn)=>{const u=(S.users||[]).find(x=>x.id===d.id);if(!u)return;if(!btn.classList.contains("armed")){btn.classList.add("armed");btn.textContent="Nieuw wachtwoord maken?";return}
@@ -1387,7 +1401,7 @@ Object.assign(ACT,{
   if(!mcp)S.mail.state="nomcp";
   render();
   loadUsers();
-  startEvents();loadJarvis();presence();if(location.hash==="#chat"){S.ai.open=true;renderAi();history.replaceState(null,"","#vandaag")}
+  startEvents();loadJarvis();presence();refreshPush();document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")refreshPush()});if(location.hash==="#chat"){S.ai.open=true;renderAi();history.replaceState(null,"","#vandaag")}
   if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
   if(S.view==="koppelingen")loadSettings();
   if(mcp)loadMail();
